@@ -54,12 +54,28 @@ $(BUILDDIR)/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# ── Tests ───────────────────────────────────────────────────────────
+TEST_BIN = $(BUILDDIR)/test_gui_buffer
+
+test: $(TARGET) $(TEST_BIN)
+	@echo "Running unit tests..."
+	./$(TEST_BIN)
+	@echo "Running verification echo test (thread mode)..."
+	./$(TARGET) --test
+	@echo "Running verification echo test (process mode)..."
+	./$(TARGET) useProcess=True --test
+	@echo "✓ All tests passed!"
+
+$(TEST_BIN): tests/test_gui_buffer.c $(BUILDDIR)/gui/screen_buf.o $(BUILDDIR)/gui/tab_bar.o
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # ── Clean ───────────────────────────────────────────────────────────
 clean:
 	rm -rf $(BUILDDIR) $(TARGET)
 
 # ── Phony targets ──────────────────────────────────────────────────
-.PHONY: all clean
+.PHONY: all clean test
 
 # ── Debug: print variables ──────────────────────────────────────────
 print-%:

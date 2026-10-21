@@ -1,3 +1,5 @@
 *.pdf
 
 *.o
+
+test_gui_buffer.dSYM/
