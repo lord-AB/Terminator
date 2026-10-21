@@ -128,18 +128,18 @@ void *worker_entry(void *arg) {
                 continue;
             }
 
-            /* Execute command segment (Stage 4 single command with redirection) */
-            Command *cmd = &pl.commands[0];
-            if (cmd->argc > 0 && builtins_is_builtin(cmd->argv[0])) {
-                int res = builtins_exec_cmd(ctx, cmd, write_fd, shared);
+            /* Execute command / pipeline */
+            if (pl.num_commands == 1 && pl.commands[0].argc > 0 &&
+                builtins_is_builtin(pl.commands[0].argv[0])) {
+                int res = builtins_exec_cmd(ctx, &pl.commands[0], write_fd, shared);
                 if (res == BUILTIN_EXIT) {
                     TERM_LOG("tab[%d]: exit built-in invoked, exiting", tab_id);
                     pipeline_free(&pl);
                     break;
                 }
             } else {
-                /* Execute external command with I/O redirections */
-                pipeline_exec_cmd(ctx, cmd, write_fd);
+                /* Execute pipeline (1 or more commands connected by pipes, with redirections) */
+                pipeline_exec_pipeline(ctx, &pl, write_fd);
             }
 
             pipeline_free(&pl);

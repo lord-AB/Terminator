@@ -34,4 +34,18 @@ int pipeline_exec_single(ShellContext *ctx, char *argv[], int out_fd);
  */
 int pipeline_exec_cmd(ShellContext *ctx, Command *cmd, int out_fd);
 
+/*
+ * Executes a pipeline of N commands connected by N-1 pipes.
+ * - Creates N-1 inter-process pipes.
+ * - Wires child 0 stdout -> pipe 0; child i stdin -> pipe i-1, stdout -> pipe i;
+ *   child N-1 stdout -> capture_pipe -> out_fd.
+ * - Applies per-command redirections (< infile, > outfile, >> outfile).
+ * - Expands wildcards (*, ?) in command arguments relative to ctx->cwd.
+ * - Streams final pipeline output to out_fd.
+ * - Waits for all N child processes and sets ctx->last_status ($?) to the
+ *   exit code of the last command.
+ * Returns the exit status.
+ */
+int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd);
+
 #endif /* EXEC_PIPELINE_H */

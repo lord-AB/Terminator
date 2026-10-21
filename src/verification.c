@@ -32,6 +32,20 @@ static int send_and_collect(int write_fd, int read_fd, const char *cmd,
     }
     out_buf[len] = '\0';
     if (out_type) *out_type = type;
+
+    /* Drain any subsequent chunks for this command */
+    size_t total = len;
+    while (total < out_sz - 1) {
+        pfd.revents = 0;
+        if (poll(&pfd, 1, 60) <= 0) break;
+        uint32_t next_type, next_len;
+        if (proto_recv(read_fd, &next_type, out_buf + total, out_sz - 1 - total, &next_len) < 0) {
+            break;
+        }
+        total += next_len;
+        out_buf[total] = '\0';
+    }
+
     return 0;
 }
 
@@ -311,7 +325,74 @@ int run_verification_test(ExecMode mode) {
     unlink("/tmp/infile.txt");
     unlink("/tmp/outfile.txt");
 
-    /* 10. Verify shared history */
+    /* 10. Stage 5: Pipeline & Pipe Orchestration Verification */
+    printf("\n--- Stage 5: Pipelines & Pipe Orchestration Verification ---\n");
+
+    /* 10a. 2-stage pipeline with wildcards: ls test_pipe*.txt | wc -l */
+    FILE *pt1 = fopen("/tmp/test_pipe1.txt", "w"); if (pt1) { fprintf(pt1, "1\n"); fclose(pt1); }
+    FILE *pt2 = fopen("/tmp/test_pipe2.txt", "w"); if (pt2) { fprintf(pt2, "2\n"); fclose(pt2); }
+    FILE *pt3 = fopen("/tmp/test_pipe3.txt", "w"); if (pt3) { fprintf(pt3, "3\n"); fclose(pt3); }
+
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "ls test_pipe*.txt | wc -l", resp, sizeof(resp), &type) != 0) {
+        fprintf(stderr, "FAIL: ls test_pipe*.txt | wc -l did not respond\n");
+        return 1;
+    }
+    printf("[PASS] ls test_pipe*.txt | wc -l output: \"%s\"", resp);
+    if (strstr(resp, "3") != NULL) {
+        printf("[PASS] 2-stage pipeline with wildcards verified\n");
+    } else {
+        printf("[FAIL] Unexpected output: \"%s\"\n", resp);
+        return 1;
+    }
+
+    /* 10b. 3-stage pipeline: cat abc.c | sort | head -5 */
+    FILE *p_abc = fopen("/tmp/abc.c", "w");
+    if (p_abc) {
+        fprintf(p_abc, "zebra\nyellow\napple\norange\nbanana\ngrape\ncherry\n");
+        fclose(p_abc);
+    }
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "cat abc.c | sort | head -5", resp, sizeof(resp), &type) != 0) {
+        fprintf(stderr, "FAIL: cat abc.c | sort | head -5 did not respond\n");
+        return 1;
+    }
+    printf("[PASS] cat abc.c | sort | head -5 output: \"%s\"", resp);
+    if (strstr(resp, "apple") != NULL && strstr(resp, "banana") != NULL &&
+        strstr(resp, "cherry") != NULL && strstr(resp, "grape") != NULL &&
+        strstr(resp, "orange") != NULL && strstr(resp, "zebra") == NULL) {
+        printf("[PASS] 3-stage pipeline verified\n");
+    } else {
+        printf("[FAIL] Unexpected output: \"%s\"\n", resp);
+        return 1;
+    }
+
+    /* 10c. Pipeline combined with redirections: sort < abc.c | head -2 > out_pipe.txt */
+    unlink("/tmp/out_pipe.txt");
+    proto_send(tabs[0].gui_write_fd, GUI_MSG_LINE, "sort < abc.c | head -2 > out_pipe.txt", 37);
+    usleep(300000);
+    FILE *f_op = fopen("/tmp/out_pipe.txt", "r");
+    if (f_op) {
+        char op_buf[128] = {0};
+        size_t nr = fread(op_buf, 1, sizeof(op_buf) - 1, f_op);
+        fclose(f_op);
+        if (nr > 0 && strcmp(op_buf, "apple\nbanana\n") == 0) {
+            printf("[PASS] Pipeline combined with '<' and '>' verified\n");
+        } else {
+            printf("[FAIL] out_pipe.txt content mismatch: \"%s\"\n", op_buf);
+            return 1;
+        }
+    } else {
+        printf("[FAIL] out_pipe.txt was not created\n");
+        return 1;
+    }
+
+    /* Clean up /tmp test files */
+    unlink("/tmp/test_pipe1.txt");
+    unlink("/tmp/test_pipe2.txt");
+    unlink("/tmp/test_pipe3.txt");
+    unlink("/tmp/abc.c");
+    unlink("/tmp/out_pipe.txt");
+
+    /* 11. Verify shared history */
     printf("\n--- History verification ---\n");
     int hist_count = shm_history_count(shared);
     printf("Total commands in history: %d\n", hist_count);
@@ -319,13 +400,13 @@ int run_verification_test(ExecMode mode) {
         const char *h = shm_history_get(shared, i);
         if (h) printf("  [%d] %s\n", i, h);
     }
-    if (hist_count >= 13) {
+    if (hist_count >= 16) {
         printf("[PASS] Shared history logged all commands from both tabs\n");
     } else {
         printf("[FAIL] History count too low: %d\n", hist_count);
     }
 
-    /* 11. Test exit built-in in Tab 0 */
+    /* 12. Test exit built-in in Tab 0 */
     printf("\n--- Testing 'exit' built-in ---\n");
     if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "exit", resp, sizeof(resp), &type) == 0) {
         if (type == TAB_MSG_EXIT) {
@@ -336,12 +417,12 @@ int run_verification_test(ExecMode mode) {
     worker_stop(&tabs[1]);
     printf("[PASS] All workers stopped cleanly\n");
 
-    /* 12. Clean up */
+    /* 13. Clean up */
     shm_destroy(shared, mode);
     printf("[PASS] Shared memory destroyed\n");
 
     printf("\n========================================\n");
-    printf("  Stage 4 Verification Complete!\n");
+    printf("  Stage 5 Verification Complete!\n");
     printf("========================================\n\n");
     return 0;
 }
