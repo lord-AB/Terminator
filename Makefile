@@ -60,8 +60,9 @@ TEST_PARSER_BIN = $(BUILDDIR)/test_parser
 TEST_REDIRECT_BIN = $(BUILDDIR)/test_redirect
 TEST_PIPELINE_BIN = $(BUILDDIR)/test_pipeline
 TEST_MULTIWATCH_BIN = $(BUILDDIR)/test_multiwatch
+TEST_HOTKEYS_BIN = $(BUILDDIR)/test_hotkeys
 
-test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPELINE_BIN) $(TEST_MULTIWATCH_BIN)
+test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPELINE_BIN) $(TEST_MULTIWATCH_BIN) $(TEST_HOTKEYS_BIN)
 	@echo "Running GUI unit tests..."
 	./$(TEST_BIN)
 	@echo "Running Multiline & Parser unit tests..."
@@ -72,6 +73,8 @@ test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPEL
 	./$(TEST_PIPELINE_BIN)
 	@echo "Running multiWatch unit tests..."
 	./$(TEST_MULTIWATCH_BIN)
+	@echo "Running Hotkeys & Keybindings unit tests..."
+	./$(TEST_HOTKEYS_BIN)
 	@echo "Running verification echo test (thread mode)..."
 	./$(TARGET) --test
 	@echo "Running verification echo test (process mode)..."
@@ -95,6 +98,10 @@ $(TEST_PIPELINE_BIN): tests/test_pipeline.c $(BUILDDIR)/parser/lexer.o $(BUILDDI
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TEST_MULTIWATCH_BIN): tests/test_multiwatch.c $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/ipc/protocol.o
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(TEST_HOTKEYS_BIN): tests/test_hotkeys.c $(BUILDDIR)/input/hotkey_cfg.o $(BUILDDIR)/input/line_editor.o $(BUILDDIR)/gui/screen_buf.o $(BUILDDIR)/gui/clipboard.o $(BUILDDIR)/ipc/shm_sync.o
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 

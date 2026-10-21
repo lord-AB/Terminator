@@ -1,6 +1,8 @@
 *.pdf
 
 *.o
+build/
+terminator
 
 test_gui_buffer.dSYM/
 

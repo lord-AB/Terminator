@@ -19,6 +19,8 @@
 #include "gui/x11_window.h"
 #include "gui/screen_buf.h"
 #include "gui/tab_bar.h"
+#include "gui/clipboard.h"
+#include "input/line_editor.h"
 #include "ipc/protocol.h"
 #include "ipc/worker.h"
 #include "parser/multiline.h"
@@ -178,6 +180,11 @@ int gui_init(GuiState *gui, ExecMode mode, SharedState *shared) {
     XMapWindow(gui->display, gui->window);
     XFlush(gui->display);
 
+    /* ── Initialize Clipboard & Hotkeys ─────────────────────────────── */
+    clipboard_init(gui);
+    memset(gui->cfg_err_msg, 0, sizeof(gui->cfg_err_msg));
+    hotkey_cfg_load(&gui->hotkeys, NULL, gui->cfg_err_msg, sizeof(gui->cfg_err_msg));
+
     gui->running = 1;
     TERM_LOG("gui_init: window created (%dx%d, grid %dx%d)",
              gui->win_width, gui->win_height, gui->term_cols, gui->term_rows);
@@ -241,6 +248,12 @@ int gui_open_tab(GuiState *gui) {
     gui->tabs[slot].command_running = 0;
     gui->num_tabs++;
     gui->active_tab = slot;
+
+    /* Report config errors in terminal if any */
+    if (gui->cfg_err_msg[0] != '\0') {
+        screen_buf_add_text(gui->tabs[slot].screen, gui->cfg_err_msg);
+        gui->cfg_err_msg[0] = '\0';
+    }
 
     TERM_LOG("gui_open_tab: opened tab %d (total %d)", slot, gui->num_tabs);
     return slot;
@@ -457,6 +470,7 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
     int ctrl  = (ev->state & ControlMask) != 0;
     int shift = (ev->state & ShiftMask) != 0;
     int alt   = (ev->state & Mod1Mask) != 0;
+    int cmd   = (ev->state & Mod4Mask) != 0;
     UNUSED(shift);
 
     /* ── Ctrl+C: cancel current line / multiline input or interrupt job ── */
@@ -485,35 +499,10 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
         return;
     }
 
-    /* ── Ctrl+T: new tab ────────────────────────────────────────────── */
-    if (ctrl && (keysym == XK_t || keysym == XK_T)) {
+    /* ── Ctrl+T / Cmd+T: new tab ───────────────────────────────────── */
+    if ((ctrl || cmd) && (keysym == XK_t || keysym == XK_T)) {
         gui_open_tab(gui);
         gui_redraw(gui);
-        return;
-    }
-
-    /* ── Ctrl+D: close tab (only on empty input) ────────────────────── */
-    if (ctrl && (keysym == XK_d || keysym == XK_D)) {
-        if (gui->active_tab >= 0 && gui->tabs[gui->active_tab].in_use) {
-            ScreenBuf *sb = gui->tabs[gui->active_tab].screen;
-            if (sb && sb->input_len == 0) {
-                gui_close_tab(gui, gui->active_tab);
-                gui_redraw(gui);
-                return;
-            }
-        }
-        return;
-    }
-
-    /* ── Ctrl+L: clear screen ───────────────────────────────────────── */
-    if (ctrl && (keysym == XK_l || keysym == XK_L)) {
-        if (gui->active_tab >= 0 && gui->tabs[gui->active_tab].in_use) {
-            ScreenBuf *sb = gui->tabs[gui->active_tab].screen;
-            if (sb) {
-                screen_buf_clear(sb);
-                gui_redraw(gui);
-            }
-        }
         return;
     }
 
@@ -540,6 +529,15 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
 
     ScreenBuf *sb = gui->tabs[gui->active_tab].screen;
     if (!sb) return;
+
+    /* ── Configurable Hotkeys (line_editor & clipboard actions) ─────── */
+    HotkeyAction action = hotkey_cfg_match(&gui->hotkeys, keysym, ev->state);
+    if (action != HOTKEY_ACTION_NONE) {
+        if (line_editor_handle_action(gui, sb, action)) {
+            gui_redraw(gui);
+            return;
+        }
+    }
 
     switch (keysym) {
     case XK_Return: {
@@ -676,7 +674,7 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
 
     default:
         /* Insert printable characters */
-        if (len > 0 && (unsigned char)buf[0] >= 32 && !ctrl && !alt) {
+        if (len > 0 && (unsigned char)buf[0] >= 32 && !ctrl && !alt && !cmd) {
             for (int i = 0; i < len; i++) {
                 screen_buf_input_insert(sb, buf[i]);
             }
@@ -731,6 +729,15 @@ static void handle_x11_event(GuiState *gui, XEvent *ev) {
 
     case ButtonPress:
         handle_button_press(gui, &ev->xbutton);
+        break;
+
+    case SelectionRequest:
+        clipboard_handle_selection_request(gui, &ev->xselectionrequest);
+        break;
+
+    case SelectionNotify:
+        clipboard_handle_selection_notify(gui, &ev->xselection);
+        gui_redraw(gui);
         break;
 
     case ConfigureNotify: {

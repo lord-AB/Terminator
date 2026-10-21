@@ -12,6 +12,10 @@
 #include "ipc/protocol.h"
 #include "ipc/shm_sync.h"
 #include "ipc/worker.h"
+#include "input/hotkey_cfg.h"
+#include "input/line_editor.h"
+#include "gui/screen_buf.h"
+#include <assert.h>
 
 /* ── Helper to send command and collect response packet ─────────────── */
 static int send_and_collect(int write_fd, int read_fd, const char *cmd,
@@ -450,7 +454,65 @@ int run_verification_test(ExecMode mode) {
         return 1;
     }
 
-    /* 12. Verify shared history */
+    /* 12. Stage 7: Hotkeys, Line Editor & Custom Keybindings */
+    printf("\n--- Stage 7: Hotkeys & Keybindings Verification ---\n");
+
+    /* 12a. Line editor operations */
+    ScreenBuf *v_sb = screen_buf_create();
+    const char *v_init = "git status --short";
+    for (int i = 0; v_init[i]; i++) screen_buf_input_insert(v_sb, v_init[i]);
+
+    line_editor_move_home(v_sb);
+    assert(v_sb->cursor_pos == 0);
+    line_editor_move_end(v_sb);
+    assert(v_sb->cursor_pos == 18);
+
+    line_editor_delete_prev_word(v_sb); /* deletes "--short" */
+    if (strcmp(v_sb->input, "git status ") == 0) {
+        printf("[PASS] Ctrl+W (delete_prev_word) verified: \"%s\"\n", v_sb->input);
+    } else {
+        printf("[FAIL] Ctrl+W mismatch: \"%s\"\n", v_sb->input);
+        return 1;
+    }
+
+    line_editor_delete_to_start(v_sb);
+    if (v_sb->input_len == 0 && v_sb->cursor_pos == 0) {
+        printf("[PASS] Ctrl+U (delete_to_start) verified\n");
+    } else {
+        printf("[FAIL] Ctrl+U mismatch\n");
+        return 1;
+    }
+    screen_buf_destroy(v_sb);
+
+    /* 12b. Custom ~/.terminatorrc remapping and fallback on conflict */
+    const char *v_rc = "/tmp/v_terminatorrc";
+    FILE *v_fp = fopen(v_rc, "w");
+    if (v_fp) {
+        fprintf(v_fp, "move_home = Ctrl+H\n");
+        fprintf(v_fp, "clear_screen = Ctrl+W\n"); /* conflict with delete_prev_word */
+        fclose(v_fp);
+    }
+    HotkeyConfig v_cfg;
+    char v_err[512] = {0};
+    int v_conflicts = hotkey_cfg_load(&v_cfg, v_rc, v_err, sizeof(v_err));
+    if (v_conflicts > 0 && strstr(v_err, "conflict") != NULL) {
+        printf("[PASS] Conflict detection reported error and triggered fallback\n");
+    } else {
+        printf("[FAIL] Conflict detection did not report expected warning\n");
+        return 1;
+    }
+
+    if (hotkey_cfg_match(&v_cfg, XK_h, ControlMask) == HOTKEY_ACTION_MOVE_HOME &&
+        hotkey_cfg_match(&v_cfg, XK_w, ControlMask) == HOTKEY_ACTION_DELETE_PREV_WORD &&
+        hotkey_cfg_match(&v_cfg, XK_l, ControlMask) == HOTKEY_ACTION_CLEAR_SCREEN) {
+        printf("[PASS] Custom hotkey remapping & safe fallback verified\n");
+    } else {
+        printf("[FAIL] Hotkey mapping mismatch\n");
+        return 1;
+    }
+    unlink(v_rc);
+
+    /* 13. Verify shared history */
     printf("\n--- History verification ---\n");
     int hist_count = shm_history_count(shared);
     printf("Total commands in history: %d\n", hist_count);
@@ -464,7 +526,7 @@ int run_verification_test(ExecMode mode) {
         printf("[FAIL] History count too low: %d\n", hist_count);
     }
 
-    /* 13. Test exit built-in in Tab 0 */
+    /* 14. Test exit built-in in Tab 0 */
     printf("\n--- Testing 'exit' built-in ---\n");
     if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "exit", resp, sizeof(resp), &type) == 0) {
         if (type == TAB_MSG_EXIT) {
@@ -475,12 +537,12 @@ int run_verification_test(ExecMode mode) {
     worker_stop(&tabs[1]);
     printf("[PASS] All workers stopped cleanly\n");
 
-    /* 14. Clean up */
+    /* 15. Clean up */
     shm_destroy(shared, mode);
     printf("[PASS] Shared memory destroyed\n");
 
     printf("\n========================================\n");
-    printf("  Stage 6 Verification Complete!\n");
+    printf("  Stage 7 Verification Complete!\n");
     printf("========================================\n\n");
     return 0;
 }

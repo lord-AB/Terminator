@@ -15,6 +15,8 @@
 #include "common.h"
 #include "gui/screen_buf.h"
 #include "gui/tab_bar.h"
+#include "gui/clipboard.h"
+#include "input/hotkey_cfg.h"
 #include "ipc/worker.h"
 #include "ipc/shm_sync.h"
 
@@ -74,6 +76,11 @@ typedef struct GuiState {
     /* Execution mode & shared state */
     ExecMode     mode;
     SharedState *shared;
+
+    /* Hotkeys & Clipboard */
+    HotkeyConfig   hotkeys;
+    ClipboardState clipboard;
+    char           cfg_err_msg[1024];
 
     /* Event loop control */
     int          running;
