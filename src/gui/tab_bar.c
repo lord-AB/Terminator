@@ -88,7 +88,31 @@ void tab_bar_draw(struct GuiState *gui)
     XSetForeground(dpy, gc, gui->color_tab_bg);
     XFillRectangle(dpy, buf, gc, 0, 0, (unsigned)win_w, (unsigned)bar_h);
 
-    /* ── 2. Draw one rectangle per active tab ─────────────────────── */
+    /* ── 2. Calculate [+] button width and available width ────────── */
+    const char *plus_label = " + ";
+    int plus_text_w = XTextWidth(font, plus_label, (int)strlen(plus_label));
+    int plus_btn_w  = plus_text_w + TAB_PAD_X * 2;
+
+    int active_tabs_count = 0;
+    for (int i = 0; i < MAX_TABS; i++) {
+        if (gui->tabs[i].in_use) {
+            active_tabs_count++;
+        }
+    }
+
+    int has_free_slot = (active_tabs_count < MAX_TABS);
+
+    /* Available width for all tab headers */
+    int total_avail_w = win_w - (has_free_slot ? (plus_btn_w + TAB_GAP * 3) : (TAB_GAP * 2));
+    int max_tab_w = 0;
+    if (active_tabs_count > 0 && total_avail_w > 0) {
+        max_tab_w = (total_avail_w / active_tabs_count) - TAB_GAP;
+        if (max_tab_w < 20) {
+            max_tab_w = 20; /* minimum width per tab */
+        }
+    }
+
+    /* ── 3. Draw one rectangle per active tab ─────────────────────── */
     int x_cursor = TAB_GAP;          /* start a small gap from the left  */
     int display_num = 0;             /* 1-based number shown in the label*/
 
@@ -106,6 +130,12 @@ void tab_bar_draw(struct GuiState *gui)
 
         int text_w = XTextWidth(font, label, (int)strlen(label));
         int tab_w  = text_w + TAB_PAD_X * 2;
+
+        /* Shrink tab width if tabs exceed window width */
+        if (max_tab_w > 0 && tab_w > max_tab_w) {
+            tab_w = max_tab_w;
+        }
+
         int tab_h  = bar_h - 2;          /* 1px top margin + 1px for border */
         int tab_y  = 1;                  /* 1px below the window top edge   */
 
@@ -121,9 +151,20 @@ void tab_bar_draw(struct GuiState *gui)
         /* Draw text label (vertically centred inside the tab rect) */
         int text_y = (bar_h + font->ascent - font->descent) / 2;
         XSetForeground(dpy, gc, gui->color_tab_text);
-        XDrawString(dpy, buf, gc,
-                    x_cursor + TAB_PAD_X, text_y,
-                    label, (int)strlen(label));
+
+        /* Calculate how many characters fit in tab_w */
+        int avail_text_w = tab_w - TAB_PAD_X * 2;
+        if (avail_text_w > 0) {
+            int draw_chars = (int)strlen(label);
+            while (draw_chars > 0 && XTextWidth(font, label, draw_chars) > avail_text_w) {
+                draw_chars--;
+            }
+            if (draw_chars > 0) {
+                XDrawString(dpy, buf, gc,
+                            x_cursor + TAB_PAD_X, text_y,
+                            label, draw_chars);
+            }
+        }
 
         /* Subtle border around the tab */
         XSetForeground(dpy, gc, gui->color_border);
@@ -143,11 +184,9 @@ void tab_bar_draw(struct GuiState *gui)
         x_cursor += tab_w + TAB_GAP;
     }
 
-    /* ── 3. Draw the [+] "new tab" button ─────────────────────────── */
-    {
-        const char *plus_label = " + ";
-        int text_w = XTextWidth(font, plus_label, (int)strlen(plus_label));
-        int btn_w  = text_w + TAB_PAD_X * 2;
+    /* ── 4. Draw the [+] "new tab" button (only if slots are available) ── */
+    if (has_free_slot) {
+        int btn_w  = plus_btn_w;
         int btn_h  = bar_h - 2;
         int btn_y  = 1;
 
