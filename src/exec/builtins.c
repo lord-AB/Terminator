@@ -3,6 +3,7 @@
  */
 #include "exec/builtins.h"
 #include "exec/redirect.h"
+#include "features/multiwatch.h"
 #include "ipc/protocol.h"
 
 #include <stdio.h>
@@ -168,11 +169,19 @@ int builtin_history(ShellContext *ctx, int argc, char *argv[], int out_fd, Share
 }
 
 int builtin_multiwatch(ShellContext *ctx, int argc, char *argv[], int out_fd) {
-    (void)argc;
-    (void)argv;
-    send_output(out_fd, "multiWatch: will be fully implemented in Task 6\n");
-    ctx->last_status = BUILTIN_SUCCESS;
-    return BUILTIN_SUCCESS;
+    char *cmds[MULTIWATCH_MAX_CMDS];
+    int count = multiwatch_parse_args(argc, argv, cmds, MULTIWATCH_MAX_CMDS);
+    if (count <= 0) {
+        char err[] = "terminator: multiWatch: usage: multiWatch [\"cmd1\", \"cmd2\", ...]\n";
+        send_output(out_fd, err);
+        if (ctx) ctx->last_status = BUILTIN_ERROR;
+        return BUILTIN_ERROR;
+    }
+
+    int in_fd = ctx ? ctx->in_fd : -1;
+    int res = multiwatch_run(ctx, count, cmds, out_fd, in_fd);
+    multiwatch_free_cmds(cmds, count);
+    return res;
 }
 
 int builtin_jobs(ShellContext *ctx, int argc, char *argv[], int out_fd) {

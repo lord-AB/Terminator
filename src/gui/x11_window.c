@@ -238,6 +238,7 @@ int gui_open_tab(GuiState *gui) {
     }
 
     gui->tabs[slot].in_use = 1;
+    gui->tabs[slot].command_running = 0;
     gui->num_tabs++;
     gui->active_tab = slot;
 
@@ -435,6 +436,7 @@ static void handle_tab_output(GuiState *gui, int tab_idx) {
         gui_close_tab(gui, tab_idx);
         break;
     case TAB_MSG_READY:
+        gui->tabs[tab_idx].command_running = 0;
         TERM_LOG("tab[%d]: ready", tab_idx);
         break;
     default:
@@ -457,18 +459,25 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
     int alt   = (ev->state & Mod1Mask) != 0;
     UNUSED(shift);
 
-    /* ── Ctrl+C: cancel current line / multiline input ─────────────── */
+    /* ── Ctrl+C: cancel current line / multiline input or interrupt job ── */
     if (ctrl && (keysym == XK_c || keysym == XK_C)) {
         if (gui->active_tab >= 0 && gui->tabs[gui->active_tab].in_use) {
             ScreenBuf *sb = gui->tabs[gui->active_tab].screen;
+            int fd = gui->tabs[gui->active_tab].worker.gui_write_fd;
+            if (fd >= 0) {
+                int sig = SIGINT;
+                proto_send(fd, GUI_MSG_SIGNAL, &sig, sizeof(sig));
+            }
             if (sb) {
-                char line[MAX_CMD_LEN + 32];
-                snprintf(line, sizeof(line), "%s%s^C", sb->prompt, sb->input);
-                screen_buf_add_line(sb, line);
-                screen_buf_input_clear(sb);
-                sb->in_multiline = 0;
-                sb->multiline_buf[0] = '\0';
-                screen_buf_set_prompt(sb, "user@terminator> ");
+                if (sb->input_len > 0 || sb->in_multiline || !gui->tabs[gui->active_tab].command_running) {
+                    char line[MAX_CMD_LEN + 32];
+                    snprintf(line, sizeof(line), "%s%s^C", sb->prompt, sb->input);
+                    screen_buf_add_line(sb, line);
+                    screen_buf_input_clear(sb);
+                    sb->in_multiline = 0;
+                    sb->multiline_buf[0] = '\0';
+                    screen_buf_set_prompt(sb, "user@terminator> ");
+                }
                 screen_buf_scroll_reset(sb);
                 gui_redraw(gui);
             }
@@ -571,6 +580,7 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
 
             int fd = gui->tabs[gui->active_tab].worker.gui_write_fd;
             if (fd >= 0 && sb->multiline_buf[0] != '\0') {
+                gui->tabs[gui->active_tab].command_running = 1;
                 proto_send(fd, GUI_MSG_LINE, sb->multiline_buf,
                            (uint32_t)strlen(sb->multiline_buf));
             }

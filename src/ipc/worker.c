@@ -55,6 +55,8 @@ void *worker_entry(void *arg) {
         free(wa);
         return NULL;
     }
+    ctx->in_fd = read_fd;
+    ctx->out_fd = write_fd;
 
     /* Send READY and initial CWD to GUI */
     proto_send(write_fd, TAB_MSG_READY, NULL, 0);
@@ -75,6 +77,12 @@ void *worker_entry(void *arg) {
         if (msg_type == GUI_MSG_CLOSE) {
             TERM_LOG("tab[%d]: received CLOSE message, exiting", tab_id);
             break;
+        }
+
+        if (msg_type == GUI_MSG_SIGNAL) {
+            /* Signal received while idle at prompt */
+            ctx->last_status = 130;
+            continue;
         }
 
         if (msg_type == GUI_MSG_LINE) {

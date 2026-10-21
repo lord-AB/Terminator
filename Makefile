@@ -59,8 +59,9 @@ TEST_BIN = $(BUILDDIR)/test_gui_buffer
 TEST_PARSER_BIN = $(BUILDDIR)/test_parser
 TEST_REDIRECT_BIN = $(BUILDDIR)/test_redirect
 TEST_PIPELINE_BIN = $(BUILDDIR)/test_pipeline
+TEST_MULTIWATCH_BIN = $(BUILDDIR)/test_multiwatch
 
-test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPELINE_BIN)
+test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPELINE_BIN) $(TEST_MULTIWATCH_BIN)
 	@echo "Running GUI unit tests..."
 	./$(TEST_BIN)
 	@echo "Running Multiline & Parser unit tests..."
@@ -69,6 +70,8 @@ test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPEL
 	./$(TEST_REDIRECT_BIN)
 	@echo "Running Pipeline & Globbing unit tests..."
 	./$(TEST_PIPELINE_BIN)
+	@echo "Running multiWatch unit tests..."
+	./$(TEST_MULTIWATCH_BIN)
 	@echo "Running verification echo test (thread mode)..."
 	./$(TARGET) --test
 	@echo "Running verification echo test (process mode)..."
@@ -88,6 +91,10 @@ $(TEST_REDIRECT_BIN): tests/test_redirect.c $(BUILDDIR)/parser/lexer.o $(BUILDDI
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TEST_PIPELINE_BIN): tests/test_pipeline.c $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/parser/ast.o $(BUILDDIR)/exec/redirect.o $(BUILDDIR)/exec/pipeline.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/ipc/protocol.o
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(TEST_MULTIWATCH_BIN): tests/test_multiwatch.c $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/ipc/protocol.o
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 

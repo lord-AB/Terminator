@@ -11,6 +11,8 @@ ShellContext *shell_ctx_create(int tab_id) {
     if (!ctx) return NULL;
 
     ctx->tab_id = tab_id;
+    ctx->in_fd = -1;
+    ctx->out_fd = -1;
     ctx->last_status = 0;
     ctx->num_vars = 0;
 

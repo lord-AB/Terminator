@@ -20,6 +20,8 @@ typedef struct {
 
 typedef struct {
     int      tab_id;
+    int      in_fd;                 /* tab input pipe from GUI */
+    int      out_fd;                /* tab output pipe to GUI */
     char     cwd[MAX_PATH_LEN];     /* virtual working directory */
     int      last_status;           /* exit status of last command ($?) */
     ShellVar vars[MAX_VARS];

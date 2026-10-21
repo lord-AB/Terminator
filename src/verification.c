@@ -392,7 +392,65 @@ int run_verification_test(ExecMode mode) {
     unlink("/tmp/abc.c");
     unlink("/tmp/out_pipe.txt");
 
-    /* 11. Verify shared history */
+    /* 11. Stage 6: multiWatch verification */
+    printf("\n--- Stage 6: multiWatch Verification ---\n");
+    proto_send(tabs[0].gui_write_fd, GUI_MSG_LINE, "multiWatch [\"date +%T\", \"ls | wc -l\"]", 37);
+
+    char mw_output[4096] = {0};
+    size_t mw_read = 0;
+    struct pollfd mw_pfd = { .fd = tabs[0].gui_read_fd, .events = POLLIN, .revents = 0 };
+
+    int mw_poll_count = 0;
+    while (mw_poll_count++ < 15) {
+        mw_pfd.revents = 0;
+        if (poll(&mw_pfd, 1, 100) > 0) {
+            uint32_t mw_type, mw_len;
+            char chunk[1024];
+            if (proto_recv(tabs[0].gui_read_fd, &mw_type, chunk, sizeof(chunk) - 1, &mw_len) == 0) {
+                chunk[mw_len] = '\0';
+                if (mw_read + mw_len < sizeof(mw_output) - 1) {
+                    strcat(mw_output, chunk);
+                    mw_read += mw_len;
+                }
+            }
+        }
+        if (strstr(mw_output, "\"date +%T\",") != NULL && strstr(mw_output, "\"ls | wc -l\",") != NULL) {
+            break;
+        }
+    }
+
+    int mw_sig = SIGINT;
+    proto_send(tabs[0].gui_write_fd, GUI_MSG_SIGNAL, &mw_sig, sizeof(mw_sig));
+
+    mw_poll_count = 0;
+    while (mw_poll_count++ < 15) {
+        mw_pfd.revents = 0;
+        if (poll(&mw_pfd, 1, 100) > 0) {
+            uint32_t mw_type, mw_len;
+            char chunk[1024];
+            if (proto_recv(tabs[0].gui_read_fd, &mw_type, chunk, sizeof(chunk) - 1, &mw_len) == 0) {
+                chunk[mw_len] = '\0';
+                if (mw_read + mw_len < sizeof(mw_output) - 1) {
+                    strcat(mw_output, chunk);
+                    mw_read += mw_len;
+                }
+                if (strstr(chunk, "^C") != NULL) break;
+            }
+        }
+    }
+
+    printf("[PASS] multiWatch received output:\n%s", mw_output);
+    if (strstr(mw_output, "\"date +%T\",") != NULL &&
+        strstr(mw_output, "\"ls | wc -l\",") != NULL &&
+        strstr(mw_output, "---------------------------------------------------") != NULL &&
+        strstr(mw_output, "^C") != NULL) {
+        printf("[PASS] multiWatch parallel execution, format, and Ctrl+C interrupt verified\n");
+    } else {
+        printf("[FAIL] multiWatch output incomplete or missing expected markers\n");
+        return 1;
+    }
+
+    /* 12. Verify shared history */
     printf("\n--- History verification ---\n");
     int hist_count = shm_history_count(shared);
     printf("Total commands in history: %d\n", hist_count);
@@ -400,13 +458,13 @@ int run_verification_test(ExecMode mode) {
         const char *h = shm_history_get(shared, i);
         if (h) printf("  [%d] %s\n", i, h);
     }
-    if (hist_count >= 16) {
+    if (hist_count >= 17) {
         printf("[PASS] Shared history logged all commands from both tabs\n");
     } else {
         printf("[FAIL] History count too low: %d\n", hist_count);
     }
 
-    /* 12. Test exit built-in in Tab 0 */
+    /* 13. Test exit built-in in Tab 0 */
     printf("\n--- Testing 'exit' built-in ---\n");
     if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "exit", resp, sizeof(resp), &type) == 0) {
         if (type == TAB_MSG_EXIT) {
@@ -417,12 +475,12 @@ int run_verification_test(ExecMode mode) {
     worker_stop(&tabs[1]);
     printf("[PASS] All workers stopped cleanly\n");
 
-    /* 13. Clean up */
+    /* 14. Clean up */
     shm_destroy(shared, mode);
     printf("[PASS] Shared memory destroyed\n");
 
     printf("\n========================================\n");
-    printf("  Stage 5 Verification Complete!\n");
+    printf("  Stage 6 Verification Complete!\n");
     printf("========================================\n\n");
     return 0;
 }

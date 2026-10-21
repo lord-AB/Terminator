@@ -64,6 +64,7 @@ typedef struct GuiState {
     /* Tab array */
     struct {
         int         in_use;
+        int         command_running;
         TabWorker   worker;
         ScreenBuf  *screen;
     } tabs[MAX_TABS];
