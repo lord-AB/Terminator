@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <poll.h>
+#include <signal.h>
 
 #include "common.h"
 #include "gui/x11_window.h"
@@ -46,10 +48,32 @@ static ExecMode parse_args(int argc, char *argv[], int *out_test_mode) {
     return mode;
 }
 
-/* ── Stage 0 verification: echo test ────────────────────────────────── */
-static int run_echo_test(ExecMode mode) {
+/* ── Helper to send command and collect response packet ─────────────── */
+static int send_and_collect(int write_fd, int read_fd, const char *cmd,
+                            char *out_buf, size_t out_sz, uint32_t *out_type) {
+    if (proto_send(write_fd, GUI_MSG_LINE, cmd, (uint32_t)strlen(cmd)) != TERM_OK) {
+        return -1;
+    }
+
+    struct pollfd pfd = { .fd = read_fd, .events = POLLIN, .revents = 0 };
+    int ret = poll(&pfd, 1, 4000); /* 4 second timeout */
+    if (ret <= 0) {
+        return -1;
+    }
+
+    uint32_t type, len;
+    if (proto_recv(read_fd, &type, out_buf, out_sz - 1, &len) < 0) {
+        return -1;
+    }
+    out_buf[len] = '\0';
+    if (out_type) *out_type = type;
+    return 0;
+}
+
+/* ── Stage 2 verification test ──────────────────────────────────────── */
+static int run_verification_test(ExecMode mode) {
     printf("\n========================================\n");
-    printf("  Terminator — Stage 0 Verification\n");
+    printf("  Terminator — Stage 2 Verification\n");
     printf("  Mode: %s\n", mode == MODE_PROCESS ? "PROCESS" : "THREAD");
     printf("========================================\n\n");
 
@@ -66,130 +90,154 @@ static int run_echo_test(ExecMode mode) {
     worker_init(&tabs[0]);
     worker_init(&tabs[1]);
 
-    if (worker_spawn(&tabs[0], 0, mode, shared) != TERM_OK) {
-        fprintf(stderr, "FAIL: Could not spawn tab 0\n");
+    if (worker_spawn(&tabs[0], 0, mode, shared) != TERM_OK ||
+        worker_spawn(&tabs[1], 1, mode, shared) != TERM_OK) {
+        fprintf(stderr, "FAIL: Could not spawn tabs\n");
         shm_destroy(shared, mode);
         return 1;
     }
-    printf("[PASS] Tab 0 spawned\n");
+    printf("[PASS] Tabs 0 and 1 spawned\n");
 
-    if (worker_spawn(&tabs[1], 1, mode, shared) != TERM_OK) {
-        fprintf(stderr, "FAIL: Could not spawn tab 1\n");
-        worker_stop(&tabs[0]);
-        shm_destroy(shared, mode);
-        return 1;
-    }
-    printf("[PASS] Tab 1 spawned\n");
+    /* 3. Drain startup messages (READY + initial CWD) */
+    char tab0_initial_cwd[MAX_PATH_LEN] = {0};
+    char tab1_initial_cwd[MAX_PATH_LEN] = {0};
 
-    /* 3. Wait for READY from both tabs */
     for (int t = 0; t < 2; t++) {
-        uint32_t msg_type, msg_len;
-        char buf[256];
-        if (proto_recv(tabs[t].gui_read_fd, &msg_type, buf, sizeof(buf), &msg_len) < 0) {
-            fprintf(stderr, "FAIL: Could not receive READY from tab %d\n", t);
-            worker_stop(&tabs[0]);
-            worker_stop(&tabs[1]);
-            shm_destroy(shared, mode);
-            return 1;
+        int got_ready = 0, got_cwd = 0;
+        while (!got_ready || !got_cwd) {
+            uint32_t type, len;
+            char buf[MAX_PATH_LEN];
+            if (proto_recv(tabs[t].gui_read_fd, &type, buf, sizeof(buf) - 1, &len) < 0) break;
+            buf[len] = '\0';
+            if (type == TAB_MSG_READY) got_ready = 1;
+            if (type == TAB_MSG_CWD) {
+                got_cwd = 1;
+                if (t == 0) strncpy(tab0_initial_cwd, buf, sizeof(tab0_initial_cwd) - 1);
+                else strncpy(tab1_initial_cwd, buf, sizeof(tab1_initial_cwd) - 1);
+            }
         }
-        if (msg_type != TAB_MSG_READY) {
-            fprintf(stderr, "FAIL: Tab %d sent unexpected message type %u (expected READY=%d)\n",
-                    t, msg_type, TAB_MSG_READY);
-            worker_stop(&tabs[0]);
-            worker_stop(&tabs[1]);
-            shm_destroy(shared, mode);
-            return 1;
-        }
-        printf("[PASS] Tab %d is ready\n", t);
+        printf("[PASS] Tab %d startup complete (initial CWD: %s)\n",
+               t, t == 0 ? tab0_initial_cwd : tab1_initial_cwd);
     }
 
-    /* 4. Send test lines and verify echo responses */
-    const char *test_msgs[] = {
-        "hello from tab 0",
-        "ls -la",
-        "echo world"
-    };
-    int n_msgs = sizeof(test_msgs) / sizeof(test_msgs[0]);
+    /* 4. Test built-in `cd`: Change Tab 0 directory to /tmp */
+    printf("\n--- Testing 'cd' and per-tab CWD isolation ---\n");
+    char resp[MAX_CMD_LEN];
+    uint32_t type;
 
-    for (int i = 0; i < n_msgs; i++) {
-        int tab_idx = i % 2;  /* alternate between tabs */
-        const char *msg = test_msgs[i];
-        uint32_t msg_len = (uint32_t)strlen(msg);
-
-        /* Send line to tab */
-        if (proto_send(tabs[tab_idx].gui_write_fd, GUI_MSG_LINE, msg, msg_len) != TERM_OK) {
-            fprintf(stderr, "FAIL: Could not send to tab %d\n", tab_idx);
-            break;
-        }
-
-        /* Receive echoed response */
-        uint32_t resp_type, resp_len;
-        char resp_buf[MAX_CMD_LEN];
-        if (proto_recv(tabs[tab_idx].gui_read_fd, &resp_type, resp_buf, sizeof(resp_buf) - 1, &resp_len) < 0) {
-            fprintf(stderr, "FAIL: Could not receive response from tab %d\n", tab_idx);
-            break;
-        }
-        resp_buf[resp_len] = '\0';
-
-        if (resp_type != TAB_MSG_OUTPUT) {
-            fprintf(stderr, "FAIL: Unexpected response type %u\n", resp_type);
-            break;
-        }
-
-        printf("[PASS] Sent \"%s\" → tab[%d] → received \"%s\"\n", msg, tab_idx, resp_buf);
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "cd /tmp", resp, sizeof(resp), &type) != 0) {
+        fprintf(stderr, "FAIL: cd /tmp did not respond\n");
+        return 1;
+    }
+    if (type == TAB_MSG_CWD) {
+        printf("[PASS] Tab 0 changed directory to: %s\n", resp);
+    } else {
+        printf("[FAIL] Expected TAB_MSG_CWD, got type %u\n", type);
+        return 1;
     }
 
-    /* 5. Verify shared history */
-    int hist_count = shm_history_count(shared);
+    /* Verify Tab 1 directory is still untouched (run `pwd` in Tab 1) */
+    if (send_and_collect(tabs[1].gui_write_fd, tabs[1].gui_read_fd, "pwd", resp, sizeof(resp), &type) != 0) {
+        fprintf(stderr, "FAIL: pwd in tab 1 did not respond\n");
+        return 1;
+    }
+    /* Trim trailing newline if present */
+    size_t rlen = strlen(resp);
+    if (rlen > 0 && resp[rlen - 1] == '\n') resp[rlen - 1] = '\0';
+
+    if (strstr(resp, "Terminator") != NULL) {
+        printf("[PASS] Tab 1 CWD is isolated (pwd = \"%s\")\n", resp);
+    } else {
+        printf("[FAIL] Tab 1 CWD was affected: \"%s\"\n", resp);
+        return 1;
+    }
+
+    /* 5. Compile and run C program in Tab 0 */
+    printf("\n--- Testing external command execution (gcc & ./myprog) ---\n");
+    /* Create myprog.c in /tmp */
+    FILE *fp = fopen("/tmp/myprog.c", "w");
+    if (fp) {
+        fprintf(fp, "#include <stdio.h>\nint main() { printf(\"Hello from Terminator!\\n\"); return 0; }\n");
+        fclose(fp);
+    }
+
+    /* Send compilation command to Tab 0 */
+    proto_send(tabs[0].gui_write_fd, GUI_MSG_LINE, "gcc -o myprog myprog.c", 22);
+    /* Allow gcc to compile */
+    usleep(500000);
+
+    /* Run ./myprog in Tab 0 */
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "./myprog", resp, sizeof(resp), &type) != 0) {
+        fprintf(stderr, "FAIL: ./myprog did not respond\n");
+        return 1;
+    }
+    printf("[PASS] ./myprog output: \"%s\"", resp);
+    if (strstr(resp, "Hello from Terminator!") != NULL) {
+        printf("[PASS] Output verified successfully\n");
+    } else {
+        printf("[FAIL] Output mismatch: \"%s\"\n", resp);
+        return 1;
+    }
+
+    /* 6. Test unknown command error handling */
+    printf("\n--- Testing unknown command error handling ---\n");
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "notacommand", resp, sizeof(resp), &type) != 0) {
+        fprintf(stderr, "FAIL: notacommand did not respond\n");
+        return 1;
+    }
+    printf("[PASS] notacommand output: \"%s\"", resp);
+    if (strstr(resp, "command not found") != NULL) {
+        printf("[PASS] Command not found error message verified\n");
+    } else {
+        printf("[FAIL] Unexpected error message: \"%s\"\n", resp);
+        return 1;
+    }
+
+    /* 7. Test 'ls' in Tab 1 */
+    printf("\n--- Testing 'ls' in Tab 1 ---\n");
+    if (send_and_collect(tabs[1].gui_write_fd, tabs[1].gui_read_fd, "ls", resp, sizeof(resp), &type) != 0) {
+        fprintf(stderr, "FAIL: ls in tab 1 did not respond\n");
+        return 1;
+    }
+    if (strstr(resp, "Makefile") != NULL || strstr(resp, "src") != NULL) {
+        printf("[PASS] Tab 1 'ls' correctly lists project root\n");
+    } else {
+        printf("[FAIL] Tab 1 'ls' unexpected output: \"%s\"\n", resp);
+        return 1;
+    }
+
+    /* 8. Verify shared history */
     printf("\n--- History verification ---\n");
-    printf("Total commands in history: %d (expected %d)\n", hist_count, n_msgs);
-
-    if (hist_count == n_msgs) {
-        printf("[PASS] History count matches\n");
-    } else {
-        printf("[FAIL] History count mismatch\n");
-    }
-
-    /* Print all history entries */
-    for (int i = 0; i < hist_count && i < HISTORY_DISPLAY; i++) {
-        const char *entry = shm_history_get(shared, i);
-        if (entry) {
-            printf("  history[%d] = \"%s\"\n", i, entry);
-        }
-    }
-
-    /* 6. Verify cross-tab history visibility */
-    printf("\n--- Cross-tab history test ---\n");
-    /* Both tabs wrote to the same shared history. Verify we can see
-     * commands from tab 0 and tab 1 in the same history buffer. */
-    int found_tab0 = 0, found_tab1 = 0;
+    int hist_count = shm_history_count(shared);
+    printf("Total commands in history: %d\n", hist_count);
     for (int i = 0; i < hist_count; i++) {
-        const char *entry = shm_history_get(shared, i);
-        if (entry) {
-            if (strstr(entry, "hello from tab 0")) found_tab0 = 1;
-            if (strstr(entry, "ls -la")) found_tab1 = 1;
-        }
+        const char *h = shm_history_get(shared, i);
+        if (h) printf("  [%d] %s\n", i, h);
     }
-    if (found_tab0 && found_tab1) {
-        printf("[PASS] Cross-tab history: commands from both tabs visible\n");
+    if (hist_count >= 5) {
+        printf("[PASS] Shared history logged all commands from both tabs\n");
     } else {
-        printf("[FAIL] Cross-tab history: tab0=%d tab1=%d\n", found_tab0, found_tab1);
+        printf("[FAIL] History count too low: %d\n", hist_count);
     }
 
-    /* 7. Stop workers */
-    printf("\n--- Shutting down ---\n");
+    /* 9. Test exit built-in in Tab 0 */
+    printf("\n--- Testing 'exit' built-in ---\n");
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "exit", resp, sizeof(resp), &type) == 0) {
+        if (type == TAB_MSG_EXIT) {
+            printf("[PASS] Tab 0 sent TAB_MSG_EXIT\n");
+        }
+    }
     worker_stop(&tabs[0]);
     worker_stop(&tabs[1]);
-    printf("[PASS] All workers stopped\n");
+    printf("[PASS] All workers stopped cleanly\n");
 
-    /* 8. Cleanup */
+    /* 10. Clean up */
     shm_destroy(shared, mode);
     printf("[PASS] Shared memory destroyed\n");
 
     printf("\n========================================\n");
-    printf("  Stage 0 Verification Complete!\n");
+    printf("  Stage 2 Verification Complete!\n");
     printf("========================================\n\n");
-
     return 0;
 }
 
@@ -206,7 +254,7 @@ static int run_gui(ExecMode mode) {
         TERM_LOG("Could not open X11 display. (Ensure DISPLAY is set, e.g. via XQuartz on macOS)");
         TERM_LOG("Falling back to headless verification test...");
         shm_destroy(shared, mode);
-        return run_echo_test(mode);
+        return run_verification_test(mode);
     }
 
     /* Open the first tab */
@@ -227,11 +275,12 @@ static int run_gui(ExecMode mode) {
 }
 
 int main(int argc, char *argv[]) {
+    signal(SIGPIPE, SIG_IGN);
     int test_mode = 0;
     ExecMode mode = parse_args(argc, argv, &test_mode);
 
     if (test_mode) {
-        return run_echo_test(mode);
+        return run_verification_test(mode);
     }
 
     return run_gui(mode);

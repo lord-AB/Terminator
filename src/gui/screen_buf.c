@@ -32,6 +32,9 @@ ScreenBuf *screen_buf_create(void)
     strncpy(sb->prompt, "user@terminator> ", sizeof(sb->prompt) - 1);
     sb->prompt[sizeof(sb->prompt) - 1] = '\0';
 
+    sb->history_idx = -1;
+    sb->in_multiline = 0;
+
     /* Capture the current working directory */
     if (!getcwd(sb->cwd, sizeof(sb->cwd))) {
         /* Fallback if getcwd fails (shouldn't happen normally) */

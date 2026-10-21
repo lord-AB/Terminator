@@ -37,6 +37,14 @@ typedef struct {
 
     /* ---- Tab metadata -------------------------------------------- */
     char    cwd[MAX_PATH_LEN];    /* current working directory        */
+
+    /* ---- Multiline command accumulator ---------------------------- */
+    char    multiline_buf[MAX_CMD_LEN * 4];
+    int     in_multiline;         /* 1 if gathering multiline command */
+
+    /* ---- Command history browsing --------------------------------- */
+    int     history_idx;          /* -1 = not browsing, >= 0 = index  */
+    char    saved_input[MAX_CMD_LEN];
 } ScreenBuf;
 
 /* ------------------------------------------------------------------ */

@@ -56,10 +56,13 @@ $(BUILDDIR)/%.o: src/%.c
 
 # ── Tests ───────────────────────────────────────────────────────────
 TEST_BIN = $(BUILDDIR)/test_gui_buffer
+TEST_PARSER_BIN = $(BUILDDIR)/test_parser
 
-test: $(TARGET) $(TEST_BIN)
-	@echo "Running unit tests..."
+test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN)
+	@echo "Running GUI unit tests..."
 	./$(TEST_BIN)
+	@echo "Running Multiline & Parser unit tests..."
+	./$(TEST_PARSER_BIN)
 	@echo "Running verification echo test (thread mode)..."
 	./$(TARGET) --test
 	@echo "Running verification echo test (process mode)..."
@@ -67,6 +70,10 @@ test: $(TARGET) $(TEST_BIN)
 	@echo "✓ All tests passed!"
 
 $(TEST_BIN): tests/test_gui_buffer.c $(BUILDDIR)/gui/screen_buf.o $(BUILDDIR)/gui/tab_bar.o
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(TEST_PARSER_BIN): tests/test_parser.c $(BUILDDIR)/parser/multiline.o
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 

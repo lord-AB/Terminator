@@ -21,6 +21,7 @@
 #include "gui/tab_bar.h"
 #include "ipc/protocol.h"
 #include "ipc/worker.h"
+#include "parser/multiline.h"
 
 /* ── Color helper ───────────────────────────────────────────────────── */
 static unsigned long alloc_color(Display *dpy, int scr,
@@ -300,92 +301,79 @@ void gui_redraw(GuiState *gui) {
         int stored    = screen_buf_visible_count(sb);
         int x_margin  = 4;
 
-        if (sb->scroll_offset == 0) {
-            /* ── Normal view: scrollback + input line at bottom ─────── */
-            int content_rows = gui->term_rows - 1; /* reserve bottom row for input */
-            int start = stored > content_rows ? stored - content_rows : 0;
+        int content_rows = gui->term_rows - 1; /* reserve bottom row for input */
 
-            for (int r = 0; r < content_rows; r++) {
-                int idx = start + r;
-                if (idx >= 0 && idx < stored) {
-                    const char *line = screen_buf_get_line(sb, idx);
-                    if (line && line[0]) {
-                        int y = bar_h + r * gui->char_height + gui->font_ascent;
-                        XSetForeground(dpy, gc, gui->color_fg);
-                        /* Truncate to terminal width */
-                        int len = (int)strlen(line);
-                        if (len > gui->term_cols) len = gui->term_cols;
-                        XDrawString(dpy, buf, gc, x_margin, y, line, len);
-                    }
+        /* Cap scroll_offset so it never scrolls past oldest available lines */
+        int max_scroll = (stored > content_rows) ? (stored - content_rows) : 0;
+        if (sb->scroll_offset > max_scroll) {
+            sb->scroll_offset = max_scroll;
+        }
+
+        /* Calculate visible scrollback window */
+        int end = stored - sb->scroll_offset;
+        int start = end > content_rows ? (end - content_rows) : 0;
+
+        for (int r = 0; r < content_rows; r++) {
+            int idx = start + r;
+            if (idx >= 0 && idx < end) {
+                const char *line = screen_buf_get_line(sb, idx);
+                if (line && line[0]) {
+                    int y = bar_h + r * gui->char_height + gui->font_ascent;
+                    XSetForeground(dpy, gc, gui->color_fg);
+                    int len = (int)strlen(line);
+                    if (len > gui->term_cols) len = gui->term_cols;
+                    XDrawString(dpy, buf, gc, x_margin, y, line, len);
                 }
             }
+        }
 
-            /* ── Draw input line (prompt + input + cursor) ─────────── */
-            int input_row = gui->term_rows - 1;
-            int input_y   = bar_h + input_row * gui->char_height + gui->font_ascent;
+        /* ── Draw input line (prompt + input + cursor) at bottom ─────────── */
+        int input_row = gui->term_rows - 1;
+        int input_y   = bar_h + input_row * gui->char_height + gui->font_ascent;
 
-            /* Prompt (green) */
-            int prompt_len = (int)strlen(sb->prompt);
-            if (prompt_len > 0) {
-                XSetForeground(dpy, gc, gui->color_prompt);
-                int draw_plen = prompt_len > gui->term_cols ? gui->term_cols : prompt_len;
-                XDrawString(dpy, buf, gc, x_margin, input_y, sb->prompt, draw_plen);
-            }
-
-            /* Input text (white/fg) */
-            int input_x = x_margin + prompt_len * gui->char_width;
-            if (sb->input_len > 0) {
-                XSetForeground(dpy, gc, gui->color_fg);
-                int draw_ilen = sb->input_len;
-                int max_input_chars = gui->term_cols - prompt_len;
-                if (draw_ilen > max_input_chars && max_input_chars > 0)
-                    draw_ilen = max_input_chars;
-                if (draw_ilen > 0)
-                    XDrawString(dpy, buf, gc, input_x, input_y, sb->input, draw_ilen);
-            }
-
-            /* Cursor (block) */
-            int cursor_x = input_x + sb->cursor_pos * gui->char_width;
-            int cursor_y = bar_h + input_row * gui->char_height;
-            XSetForeground(dpy, gc, gui->color_cursor);
-            XFillRectangle(dpy, buf, gc, cursor_x, cursor_y,
-                           (unsigned)gui->char_width, (unsigned)gui->char_height);
-            /* Draw char under cursor in background color (inverse) */
-            if (sb->cursor_pos < sb->input_len) {
-                XSetForeground(dpy, gc, gui->color_bg);
-                XDrawString(dpy, buf, gc, cursor_x, input_y,
-                            &sb->input[sb->cursor_pos], 1);
-            }
-
-        } else {
-            /* ── Scrolled-up view: show older lines only ───────────── */
-            int end   = stored - sb->scroll_offset;
-            int start = end - gui->term_rows;
-            if (start < 0) start = 0;
-
-            for (int r = 0; r < gui->term_rows; r++) {
-                int idx = start + r;
-                if (idx >= 0 && idx < end) {
-                    const char *line = screen_buf_get_line(sb, idx);
-                    if (line && line[0]) {
-                        int y = bar_h + r * gui->char_height + gui->font_ascent;
-                        XSetForeground(dpy, gc, gui->color_fg);
-                        int len = (int)strlen(line);
-                        if (len > gui->term_cols) len = gui->term_cols;
-                        XDrawString(dpy, buf, gc, x_margin, y, line, len);
-                    }
-                }
-            }
-
-            /* Draw scroll indicator */
+        /* Prompt (green) */
+        int prompt_len = (int)strlen(sb->prompt);
+        if (prompt_len > 0) {
             XSetForeground(dpy, gc, gui->color_prompt);
+            int draw_plen = prompt_len > gui->term_cols ? gui->term_cols : prompt_len;
+            XDrawString(dpy, buf, gc, x_margin, input_y, sb->prompt, draw_plen);
+        }
+
+        /* Input text (white/fg) */
+        int input_x = x_margin + prompt_len * gui->char_width;
+        if (sb->input_len > 0) {
+            XSetForeground(dpy, gc, gui->color_fg);
+            int draw_ilen = sb->input_len;
+            int max_input_chars = gui->term_cols - prompt_len;
+            if (draw_ilen > max_input_chars && max_input_chars > 0)
+                draw_ilen = max_input_chars;
+            if (draw_ilen > 0)
+                XDrawString(dpy, buf, gc, input_x, input_y, sb->input, draw_ilen);
+        }
+
+        /* Cursor (block) */
+        int cursor_x = input_x + sb->cursor_pos * gui->char_width;
+        int cursor_y = bar_h + input_row * gui->char_height;
+        XSetForeground(dpy, gc, gui->color_cursor);
+        XFillRectangle(dpy, buf, gc, cursor_x, cursor_y,
+                       (unsigned)gui->char_width, (unsigned)gui->char_height);
+        /* Draw char under cursor in background color (inverse) */
+        if (sb->cursor_pos < sb->input_len) {
+            XSetForeground(dpy, gc, gui->color_bg);
+            XDrawString(dpy, buf, gc, cursor_x, input_y,
+                        &sb->input[sb->cursor_pos], 1);
+        }
+
+        /* If scrolled up, draw a neat scroll indicator on the right side */
+        if (sb->scroll_offset > 0) {
             char scroll_info[64];
             int slen = snprintf(scroll_info, sizeof(scroll_info),
-                                "-- scrollback: %d lines up --", sb->scroll_offset);
-            int sx = (gui->win_width - slen * gui->char_width) / 2;
-            if (sx < 0) sx = 4;
-            int sy = gui->win_height - gui->font_descent - 2;
-            XDrawString(dpy, buf, gc, sx, sy, scroll_info, slen);
+                                "[Scroll: %d up]", sb->scroll_offset);
+            int badge_x = gui->win_width - (slen + 1) * gui->char_width - 8;
+            if (badge_x > input_x + sb->input_len * gui->char_width + 16) {
+                XSetForeground(dpy, gc, gui->color_prompt);
+                XDrawString(dpy, buf, gc, badge_x, input_y, scroll_info, slen);
+            }
         }
     } else {
         /* No active tab — show a message */
@@ -467,6 +455,25 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
     int alt   = (ev->state & Mod1Mask) != 0;
     UNUSED(shift);
 
+    /* ── Ctrl+C: cancel current line / multiline input ─────────────── */
+    if (ctrl && (keysym == XK_c || keysym == XK_C)) {
+        if (gui->active_tab >= 0 && gui->tabs[gui->active_tab].in_use) {
+            ScreenBuf *sb = gui->tabs[gui->active_tab].screen;
+            if (sb) {
+                char line[MAX_CMD_LEN + 32];
+                snprintf(line, sizeof(line), "%s%s^C", sb->prompt, sb->input);
+                screen_buf_add_line(sb, line);
+                screen_buf_input_clear(sb);
+                sb->in_multiline = 0;
+                sb->multiline_buf[0] = '\0';
+                screen_buf_set_prompt(sb, "user@terminator> ");
+                screen_buf_scroll_reset(sb);
+                gui_redraw(gui);
+            }
+        }
+        return;
+    }
+
     /* ── Ctrl+T: new tab ────────────────────────────────────────────── */
     if (ctrl && (keysym == XK_t || keysym == XK_T)) {
         gui_open_tab(gui);
@@ -525,22 +532,64 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
 
     switch (keysym) {
     case XK_Return: {
-        /* Commit input line to scrollback */
-        char cmd[MAX_CMD_LEN];
-        strncpy(cmd, sb->input, sizeof(cmd) - 1);
-        cmd[sizeof(cmd) - 1] = '\0';
-        screen_buf_input_commit(sb);
+        /* Grab currently typed line */
+        char current_line[MAX_CMD_LEN];
+        strncpy(current_line, sb->input, sizeof(current_line) - 1);
+        current_line[sizeof(current_line) - 1] = '\0';
 
-        /* Send to worker */
-        int fd = gui->tabs[gui->active_tab].worker.gui_write_fd;
-        if (fd >= 0 && cmd[0] != '\0') {
-            proto_send(fd, GUI_MSG_LINE, cmd, (uint32_t)strlen(cmd));
-        } else if (fd >= 0) {
-            /* Empty line — still commit visually but don't send */
+        /* Visually commit the line to scrollback */
+        screen_buf_input_commit(sb);
+        screen_buf_scroll_reset(sb);
+        sb->history_idx = -1;
+
+        if (!sb->in_multiline) {
+            sb->multiline_buf[0] = '\0';
         }
 
-        /* Reset scroll to bottom */
-        screen_buf_scroll_reset(sb);
+        /* Check if line has trailing backslash */
+        size_t l_len = strlen(current_line);
+        size_t bslash_count = 0;
+        ssize_t bi = (ssize_t)l_len - 1;
+        while (bi >= 0 && current_line[bi] == '\\') {
+            bslash_count++;
+            bi--;
+        }
+        int has_trailing_bslash = (bslash_count % 2 == 1);
+
+        if (has_trailing_bslash) {
+            /* Strip the trailing backslash for line continuation */
+            current_line[l_len - 1] = '\0';
+        }
+
+        size_t mlen = strlen(sb->multiline_buf);
+        if (sb->in_multiline && mlen > 0 && !has_trailing_bslash) {
+            /* If previous line wasn't joined by backslash, append newline */
+            if (mlen < sizeof(sb->multiline_buf) - 2) {
+                sb->multiline_buf[mlen] = '\n';
+                sb->multiline_buf[mlen + 1] = '\0';
+            }
+        }
+
+        /* Append current_line to multiline buffer */
+        strncat(sb->multiline_buf, current_line,
+                sizeof(sb->multiline_buf) - strlen(sb->multiline_buf) - 1);
+
+        /* Test if accumulated input is incomplete */
+        if (multiline_is_incomplete(sb->multiline_buf)) {
+            sb->in_multiline = 1;
+            screen_buf_set_prompt(sb, "> ");
+        } else {
+            /* Command is complete! */
+            sb->in_multiline = 0;
+            screen_buf_set_prompt(sb, "user@terminator> ");
+
+            int fd = gui->tabs[gui->active_tab].worker.gui_write_fd;
+            if (fd >= 0 && sb->multiline_buf[0] != '\0') {
+                proto_send(fd, GUI_MSG_LINE, sb->multiline_buf,
+                           (uint32_t)strlen(sb->multiline_buf));
+            }
+            sb->multiline_buf[0] = '\0';
+        }
         break;
     }
 
@@ -570,19 +619,63 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
         break;
 
     case XK_Prior:  /* Page Up */
-        screen_buf_scroll_up(sb, gui->term_rows - 1);
+        screen_buf_scroll_up(sb, gui->term_rows > 3 ? gui->term_rows - 3 : 1);
         break;
 
     case XK_Next:   /* Page Down */
-        screen_buf_scroll_down(sb, gui->term_rows - 1);
+        screen_buf_scroll_down(sb, gui->term_rows > 3 ? gui->term_rows - 3 : 1);
         break;
 
     case XK_Up:
-        screen_buf_scroll_up(sb, 3);
+        if (shift) {
+            /* Shift+Up scrolls up */
+            screen_buf_scroll_up(sb, 3);
+        } else if (gui->shared) {
+            /* Up arrow browses history */
+            int total = shm_history_count(gui->shared);
+            if (total > 0) {
+                if (sb->history_idx == -1) {
+                    strncpy(sb->saved_input, sb->input, sizeof(sb->saved_input) - 1);
+                    sb->saved_input[sizeof(sb->saved_input) - 1] = '\0';
+                    sb->history_idx = total - 1;
+                } else if (sb->history_idx > 0) {
+                    sb->history_idx--;
+                }
+                const char *cmd = shm_history_get(gui->shared, sb->history_idx);
+                if (cmd) {
+                    screen_buf_input_clear(sb);
+                    for (int i = 0; cmd[i]; i++) {
+                        screen_buf_input_insert(sb, cmd[i]);
+                    }
+                }
+            }
+        }
         break;
 
     case XK_Down:
-        screen_buf_scroll_down(sb, 3);
+        if (shift) {
+            /* Shift+Down scrolls down */
+            screen_buf_scroll_down(sb, 3);
+        } else if (gui->shared && sb->history_idx != -1) {
+            /* Down arrow browses history forward */
+            int total = shm_history_count(gui->shared);
+            sb->history_idx++;
+            if (sb->history_idx >= total) {
+                sb->history_idx = -1;
+                screen_buf_input_clear(sb);
+                for (int i = 0; sb->saved_input[i]; i++) {
+                    screen_buf_input_insert(sb, sb->saved_input[i]);
+                }
+            } else {
+                const char *cmd = shm_history_get(gui->shared, sb->history_idx);
+                if (cmd) {
+                    screen_buf_input_clear(sb);
+                    for (int i = 0; cmd[i]; i++) {
+                        screen_buf_input_insert(sb, cmd[i]);
+                    }
+                }
+            }
+        }
         break;
 
     default:

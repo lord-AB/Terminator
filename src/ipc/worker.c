@@ -14,6 +14,9 @@
 #include <signal.h>
 #include "ipc/worker.h"
 #include "ipc/protocol.h"
+#include "exec/shell_ctx.h"
+#include "exec/builtins.h"
+#include "exec/pipeline.h"
 
 /* ── Initialize a TabWorker to a clean state ────────────────────────── */
 void worker_init(TabWorker *w) {
@@ -28,7 +31,7 @@ void worker_init(TabWorker *w) {
     w->shared       = NULL;
 }
 
-/* ── Dummy tab worker loop (Stage 0 echo-back) ─────────────────────── */
+/* ── Tab worker shell loop ─────────────────────────────────────────── */
 void *worker_entry(void *arg) {
     WorkerArgs *wa = (WorkerArgs *)arg;
     int read_fd  = wa->read_fd;
@@ -38,10 +41,21 @@ void *worker_entry(void *arg) {
 
     TERM_LOG("tab[%d]: worker started (read_fd=%d, write_fd=%d)", tab_id, read_fd, write_fd);
 
-    /* Send a READY message to GUI */
-    proto_send(write_fd, TAB_MSG_READY, NULL, 0);
+    /* Initialize tab's local shell context on heap to prevent thread stack overflow */
+    ShellContext *ctx = shell_ctx_create(tab_id);
+    if (!ctx) {
+        TERM_LOG("tab[%d]: failed to allocate shell context", tab_id);
+        close(read_fd);
+        close(write_fd);
+        free(wa);
+        return NULL;
+    }
 
-    /* Echo loop: read messages from GUI, echo them back */
+    /* Send READY and initial CWD to GUI */
+    proto_send(write_fd, TAB_MSG_READY, NULL, 0);
+    proto_send(write_fd, TAB_MSG_CWD, ctx->cwd, (uint32_t)strlen(ctx->cwd));
+
+    /* Shell command loop */
     char buf[MAX_CMD_LEN];
     uint32_t msg_type, msg_len;
 
@@ -59,21 +73,38 @@ void *worker_entry(void *arg) {
         }
 
         if (msg_type == GUI_MSG_LINE) {
-            TERM_LOG("tab[%d]: received line: \"%s\"", tab_id, buf);
+            /* Skip empty lines */
+            if (msg_len == 0 || buf[0] == '\0') {
+                continue;
+            }
 
-            /* Add to shared history */
+            /* Record command in shared history */
             shm_history_add(shared, buf);
 
-            /* Echo back as output */
-            char response[MAX_CMD_LEN + 64];
-            int rlen = snprintf(response, sizeof(response),
-                                "tab[%d] echo: %s", tab_id, buf);
+            /* Tokenize command line */
+            char *argv[MAX_ARGS];
+            int argc = pipeline_tokenize(buf, argv, MAX_ARGS);
 
-            proto_send(write_fd, TAB_MSG_OUTPUT, response, (uint32_t)rlen);
+            if (argc == 0) {
+                continue;
+            }
+
+            /* Check if command is a built-in */
+            if (builtins_is_builtin(argv[0])) {
+                int res = builtins_exec(ctx, argc, argv, write_fd, shared);
+                if (res == BUILTIN_EXIT) {
+                    TERM_LOG("tab[%d]: exit built-in invoked, exiting", tab_id);
+                    break;
+                }
+            } else {
+                /* Execute external command via fork + execvp */
+                pipeline_exec_single(ctx, argv, write_fd);
+            }
         }
     }
 
     /* Cleanup */
+    shell_ctx_destroy(ctx);
     close(read_fd);
     close(write_fd);
     free(wa);
