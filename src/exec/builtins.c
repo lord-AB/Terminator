@@ -2,12 +2,14 @@
  * builtins.c — Implementation of shell built-in commands
  */
 #include "exec/builtins.h"
+#include "exec/redirect.h"
 #include "ipc/protocol.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <errno.h>
 
@@ -234,4 +236,50 @@ int builtins_exec(ShellContext *ctx, int argc, char *argv[], int out_fd, SharedS
     }
 
     return BUILTIN_ERROR;
+}
+
+int builtins_exec_cmd(ShellContext *ctx, Command *cmd, int out_fd, SharedState *shared) {
+    if (!ctx || !cmd || cmd->argc == 0 || !cmd->argv[0]) return BUILTIN_SUCCESS;
+
+    /* If no output redirection, execute normally */
+    if (!cmd->outfile || cmd->outfile[0] == '\0') {
+        return builtins_exec(ctx, cmd->argc, cmd->argv, out_fd, shared);
+    }
+
+    /* Output redirection for built-in */
+    char out_path[MAX_PATH_LEN];
+    redirect_resolve_path(ctx, cmd->outfile, out_path, sizeof(out_path));
+    int flags = O_WRONLY | O_CREAT | (cmd->append_out ? O_APPEND : O_TRUNC);
+    int file_fd = open(out_path, flags, 0644);
+    if (file_fd < 0) {
+        char err[MAX_CMD_LEN];
+        snprintf(err, sizeof(err), "terminator: %s: %s\n", cmd->outfile, strerror(errno));
+        send_output(out_fd, err);
+        ctx->last_status = BUILTIN_ERROR;
+        return BUILTIN_ERROR;
+    }
+
+    int pfd[2];
+    if (pipe(pfd) < 0) {
+        close(file_fd);
+        return builtins_exec(ctx, cmd->argc, cmd->argv, out_fd, shared);
+    }
+
+    int res = builtins_exec(ctx, cmd->argc, cmd->argv, pfd[1], shared);
+    close(pfd[1]);
+
+    uint32_t type, len;
+    char buf[PIPE_BUF_SIZE];
+    while (proto_recv(pfd[0], &type, buf, sizeof(buf), &len) == 0) {
+        if (type == TAB_MSG_OUTPUT && len > 0) {
+            ssize_t w = write(file_fd, buf, len);
+            (void)w;
+        } else if (type != TAB_MSG_OUTPUT) {
+            proto_send(out_fd, type, buf, len);
+        }
+    }
+    close(pfd[0]);
+    close(file_fd);
+
+    return res;
 }

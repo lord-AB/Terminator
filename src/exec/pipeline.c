@@ -2,12 +2,14 @@
  * pipeline.c — External command execution and output piping
  */
 #include "exec/pipeline.h"
+#include "exec/redirect.h"
 #include "ipc/protocol.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <errno.h>
 
@@ -50,8 +52,42 @@ int pipeline_tokenize(char *line, char *argv[], int max_args) {
     return argc;
 }
 
-int pipeline_exec_single(ShellContext *ctx, char *argv[], int out_fd) {
-    if (!ctx || !argv || !argv[0]) return 0;
+int pipeline_exec_cmd(ShellContext *ctx, Command *cmd, int out_fd) {
+    if (!ctx || !cmd) return 0;
+
+    /* Handle redirection-only invocation without a command (e.g. "< missing_file.txt") */
+    if (cmd->argc == 0 || !cmd->argv[0]) {
+        if (cmd->infile && cmd->infile[0] != '\0') {
+            char in_path[MAX_PATH_LEN];
+            redirect_resolve_path(ctx, cmd->infile, in_path, sizeof(in_path));
+            int in_fd = open(in_path, O_RDONLY);
+            if (in_fd < 0) {
+                char err[MAX_CMD_LEN];
+                snprintf(err, sizeof(err), "terminator: %s: %s\n", cmd->infile,
+                         errno == ENOENT ? "No such file or directory" : strerror(errno));
+                if (out_fd >= 0) proto_send(out_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+                ctx->last_status = 1;
+                return 1;
+            }
+            close(in_fd);
+        }
+        if (cmd->outfile && cmd->outfile[0] != '\0') {
+            char out_path[MAX_PATH_LEN];
+            redirect_resolve_path(ctx, cmd->outfile, out_path, sizeof(out_path));
+            int flags = O_WRONLY | O_CREAT | (cmd->append_out ? O_APPEND : O_TRUNC);
+            int fd = open(out_path, flags, 0644);
+            if (fd < 0) {
+                char err[MAX_CMD_LEN];
+                snprintf(err, sizeof(err), "terminator: %s: %s\n", cmd->outfile, strerror(errno));
+                if (out_fd >= 0) proto_send(out_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+                ctx->last_status = 1;
+                return 1;
+            }
+            close(fd);
+        }
+        ctx->last_status = 0;
+        return 0;
+    }
 
     int pfd[2];
     if (pipe(pfd) < 0) {
@@ -77,7 +113,7 @@ int pipeline_exec_single(ShellContext *ctx, char *argv[], int out_fd) {
         /* ── Child process ── */
         close(pfd[0]); /* close read end */
 
-        /* Redirect stdout & stderr to pipe write end */
+        /* Redirect stdout & stderr to pipe write end initially */
         dup2(pfd[1], STDOUT_FILENO);
         dup2(pfd[1], STDERR_FILENO);
         close(pfd[1]);
@@ -90,14 +126,19 @@ int pipeline_exec_single(ShellContext *ctx, char *argv[], int out_fd) {
             _exit(1);
         }
 
+        /* Apply file redirections (< infile, > outfile, >> outfile) */
+        if (redirect_apply(ctx, cmd) < 0) {
+            _exit(1);
+        }
+
         /* Execute command */
-        execvp(argv[0], argv);
+        execvp(cmd->argv[0], cmd->argv);
 
         /* If execvp fails */
         if (errno == ENOENT) {
-            fprintf(stderr, "terminator: %s: command not found\n", argv[0]);
+            fprintf(stderr, "terminator: %s: command not found\n", cmd->argv[0]);
         } else {
-            fprintf(stderr, "terminator: %s: %s\n", argv[0], strerror(errno));
+            fprintf(stderr, "terminator: %s: %s\n", cmd->argv[0], strerror(errno));
         }
         fflush(stderr);
         _exit(127);
@@ -133,4 +174,16 @@ int pipeline_exec_single(ShellContext *ctx, char *argv[], int out_fd) {
     }
 
     return ctx->last_status;
+}
+
+int pipeline_exec_single(ShellContext *ctx, char *argv[], int out_fd) {
+    if (!ctx || !argv || !argv[0]) return 0;
+    Command cmd;
+    command_init(&cmd);
+    while (argv[cmd.argc] && cmd.argc < MAX_ARGS - 1) {
+        cmd.argv[cmd.argc] = argv[cmd.argc];
+        cmd.argc++;
+    }
+    cmd.argv[cmd.argc] = NULL;
+    return pipeline_exec_cmd(ctx, &cmd, out_fd);
 }

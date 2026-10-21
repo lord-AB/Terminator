@@ -17,9 +17,11 @@
 #include "exec/shell_ctx.h"
 #include "exec/builtins.h"
 #include "exec/pipeline.h"
+#include "exec/redirect.h"
 #include "parser/subst.h"
 #include "parser/expand.h"
 #include "parser/lexer.h"
+#include "parser/ast.h"
 
 /* ── Initialize a TabWorker to a clean state ────────────────────────── */
 void worker_init(TabWorker *w) {
@@ -103,26 +105,44 @@ void *worker_entry(void *arg) {
             }
 
             /* 3. Quote-aware tokenization */
-            char *argv[MAX_ARGS];
-            int argc = lexer_tokenize(expanded_buf, argv, MAX_ARGS);
+            char *tokens[MAX_ARGS];
+            int num_tokens = lexer_tokenize(expanded_buf, tokens, MAX_ARGS);
 
-            if (argc == 0) {
+            if (num_tokens == 0) {
                 continue;
             }
 
-            /* Check if command is a built-in */
-            if (builtins_is_builtin(argv[0])) {
-                int res = builtins_exec(ctx, argc, argv, write_fd, shared);
-                lexer_free_tokens(argv, argc);
+            /* 4. Parse AST (redirections, pipeline segments, background flag) */
+            Pipeline pl;
+            if (ast_parse(tokens, num_tokens, &pl) < 0) {
+                const char *err = "terminator: syntax error near unexpected token\n";
+                proto_send(write_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+                ctx->last_status = 2;
+                lexer_free_tokens(tokens, num_tokens);
+                continue;
+            }
+            lexer_free_tokens(tokens, num_tokens);
+
+            if (pl.num_commands == 0) {
+                pipeline_free(&pl);
+                continue;
+            }
+
+            /* Execute command segment (Stage 4 single command with redirection) */
+            Command *cmd = &pl.commands[0];
+            if (cmd->argc > 0 && builtins_is_builtin(cmd->argv[0])) {
+                int res = builtins_exec_cmd(ctx, cmd, write_fd, shared);
                 if (res == BUILTIN_EXIT) {
                     TERM_LOG("tab[%d]: exit built-in invoked, exiting", tab_id);
+                    pipeline_free(&pl);
                     break;
                 }
             } else {
-                /* Execute external command via fork + execvp */
-                pipeline_exec_single(ctx, argv, write_fd);
-                lexer_free_tokens(argv, argc);
+                /* Execute external command with I/O redirections */
+                pipeline_exec_cmd(ctx, cmd, write_fd);
             }
+
+            pipeline_free(&pl);
         }
     }
 

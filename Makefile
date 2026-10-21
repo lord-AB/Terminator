@@ -57,12 +57,15 @@ $(BUILDDIR)/%.o: src/%.c
 # ── Tests ───────────────────────────────────────────────────────────
 TEST_BIN = $(BUILDDIR)/test_gui_buffer
 TEST_PARSER_BIN = $(BUILDDIR)/test_parser
+TEST_REDIRECT_BIN = $(BUILDDIR)/test_redirect
 
-test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN)
+test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN)
 	@echo "Running GUI unit tests..."
 	./$(TEST_BIN)
 	@echo "Running Multiline & Parser unit tests..."
 	./$(TEST_PARSER_BIN)
+	@echo "Running AST & Redirection unit tests..."
+	./$(TEST_REDIRECT_BIN)
 	@echo "Running verification echo test (thread mode)..."
 	./$(TARGET) --test
 	@echo "Running verification echo test (process mode)..."
@@ -74,6 +77,10 @@ $(TEST_BIN): tests/test_gui_buffer.c $(BUILDDIR)/gui/screen_buf.o $(BUILDDIR)/gu
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TEST_PARSER_BIN): tests/test_parser.c $(BUILDDIR)/parser/multiline.o $(BUILDDIR)/parser/expand.o $(BUILDDIR)/parser/subst.o $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/shell_ctx.o
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(TEST_REDIRECT_BIN): tests/test_redirect.c $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/parser/ast.o $(BUILDDIR)/exec/redirect.o $(BUILDDIR)/exec/pipeline.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/ipc/protocol.o
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 

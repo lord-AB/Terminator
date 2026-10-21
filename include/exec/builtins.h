@@ -7,6 +7,7 @@
 #include "common.h"
 #include "exec/shell_ctx.h"
 #include "ipc/shm_sync.h"
+#include "parser/ast.h"
 
 #define BUILTIN_SUCCESS      0
 #define BUILTIN_ERROR        1
@@ -24,6 +25,11 @@ int builtins_is_builtin(const char *cmd);
  * Otherwise returns 0 on success or non-zero error code.
  */
 int builtins_exec(ShellContext *ctx, int argc, char *argv[], int out_fd, SharedState *shared);
+
+/*
+ * Executes a built-in command with optional output redirection.
+ */
+int builtins_exec_cmd(ShellContext *ctx, Command *cmd, int out_fd, SharedState *shared);
 
 /* Specific built-in implementations */
 int builtin_cd(ShellContext *ctx, int argc, char *argv[], int out_fd);

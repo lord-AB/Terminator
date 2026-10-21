@@ -6,6 +6,7 @@
 
 #include "common.h"
 #include "exec/shell_ctx.h"
+#include "parser/ast.h"
 
 /*
  * Tokenizes a line into an argv array.
@@ -22,5 +23,15 @@ int pipeline_tokenize(char *line, char *argv[], int max_args);
  * Returns the child's exit status.
  */
 int pipeline_exec_single(ShellContext *ctx, char *argv[], int out_fd);
+
+/*
+ * Executes a command with I/O redirections (< infile, > outfile).
+ * - In child: chdir(ctx->cwd) and binds redirected FDs before execvp.
+ * - Reports missing input file without executing the command.
+ * - Streams output to out_fd.
+ * - Updates ctx->last_status.
+ * Returns the exit status.
+ */
+int pipeline_exec_cmd(ShellContext *ctx, Command *cmd, int out_fd);
 
 #endif /* EXEC_PIPELINE_H */
