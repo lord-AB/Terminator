@@ -1,0 +1,83 @@
+terminator/
+├── Makefile                        # Uses wildcard rules to build subsystem objects into build/
+├── README.md                       # Setup, dependencies, usage instructions
+├── DESIGN.md                       # Detailed architecture and IPC documentation
+├── .terminatorrc.sample            # Default hotkey configuration template
+│
+├── include/                        # Public API headers mirrored by subsystem
+│   ├── common.h                    # Global constants, error codes, shared macros
+│   ├── gui/
+│   │   ├── x11_window.h            # Display, Window, GC, and Font lifecycle
+│   │   ├── tab_bar.h               # Tab header rendering and mouse click hit-testing
+│   │   ├── screen_buf.h            # Per-tab text ring-buffer, scrolling, cursor state
+│   │   └── clipboard.h             # X11 Selection (Ctrl+Shift+C / Ctrl+Shift+V)
+│   ├── ipc/
+│   │   ├── protocol.h              # Message packets between GUI and Tabs (KeyEvent, Output, Exit)
+│   │   ├── worker.h                # Unified interface for pthread (Thread mode) & fork (Process mode)
+│   │   └── shm_sync.h              # POSIX shm_open/mmap and process-shared sem_t wrappers
+│   ├── input/
+│   │   ├── line_editor.h           # Cursor movement, insertion, Ctrl+A/E/U/K/W manipulation
+│   │   ├── hotkey_cfg.h            # ~/.terminatorrc parser and KeySym-to-Action mapper
+│   │   └── autocomplete.h          # Tab-key directory scanner, LCP math, numbered menu state
+│   ├── parser/
+│   │   ├── multiline.h             # Incomplete input detector (trailing \, unclosed '', "", $())
+│   │   ├── lexer.h                 # Tokenizes strings while respecting single/double quote rules
+│   │   ├── expand.h                # $VAR,$?, and positional ($1..$#) variable expansion
+│   │   ├── subst.h                 # Innermost-first $(...) and `...` command substitution
+│   │   └── ast.h                   # Pipeline & Command structs (argv, infile, outfile, bg flag)
+│   ├── exec/
+│   │   ├── shell_ctx.h             # Per-tab state (virtual cwd, local env table, last_status $?)
+│   │   ├── pipeline.h              # Spawns N children with N-1 pipes
+│   │   ├── redirect.h              # < and > file descriptor setup with open() and dup2()
+│   │   ├── jobs.h                  # Job table, PGID management, fg/bg/jobs, SIGCHLD handler
+│   │   └── builtins.h              # Dispatcher for cd, exit, history, jobs, fg, bg, source
+│   ├── features/
+│   │   ├── history_store.h         # Shared memory 10,000-command ring buffer & file persistence
+│   │   ├── history_search.h        # Ctrl+R exact match & Longest Common Substring (DP) algorithm
+│   │   └── multiwatch.h            # Parallel process spawner, non-blocking poll() & 2s scheduler
+│   └── script/
+│       ├── script_validator.h      # Pre-execution syntax checker (balanced if/elif/else/fi)
+│       ├── test_eval.h             # Evaluator for [ ... ] (-eq, -gt, =, -f, -d)
+│       └── interpreter.h           # Line-by-line state machine for running .sh scripts
+│
+├── src/                            # Implementation files (1-to-1 match with include/)
+│   ├── main.c                      # CLI parser (useProcess=True), initializes SHM and GUI loop
+│   ├── gui/
+│   │   ├── x11_window.c            # XOpenDisplay, main poll() loop on X11 FD + Tab pipes
+│   │   ├── tab_bar.c               # Draws [1:~/dir $][2:/tmp][+] and switches active tab
+│   │   ├── screen_buf.c            # Appends command output, handles Ctrl+L and scrollback
+│   │   └── clipboard.c             # Handles SelectionRequest, SelectionNotify, XA_CLIPBOARD
+│   ├── ipc/
+│   │   ├── protocol.c              # Safe read/write packet framing over pipes
+│   │   ├── worker.c                # Spawns tab via pthread_create() or fork() based on mode
+│   │   └── shm_sync.c              # Creates/destroys shared memory and locks/unlocks semaphores
+│   ├── input/
+│   │   ├── line_editor.c           # Modifies active input line and returns redraw diffs
+│   │   ├── hotkey_cfg.c            # Parses config file, detects conflicts, falls back to defaults
+│   │   └── autocomplete.c          # opendir/readdir filtering and interactive choice handler
+│   ├── parser/
+│   │   ├── multiline.c             # State machine checking quote/paren balance across newlines
+│   │   ├── lexer.c                 # Splits raw string into tokens (|, <, >, &, words)
+│   │   ├── expand.c                # Replaces $VAR with values from shell_ctx or getenv()
+│   │   ├── subst.c                 # Forks sub-command, reads stdout pipe, splices into command string
+│   │   └── ast.c                   # Builds and frees Command/Pipeline structures
+│   ├── exec/
+│   │   ├── shell_ctx.c             # Initializes per-tab virtual CWD and local variable map
+│   │   ├── pipeline.c              # fork(), setpgid(), chdir(tab->cwd), execvp() orchestration
+│   │   ├── redirect.c              # Validates input files and binds FDs before execvp()
+│   │   ├── jobs.c                  # Tracks stopped/running jobs, sends kill(-pgid, SIGINT/SIGTSTP)
+│   │   └── builtins.c              # Implements core built-in commands
+│   ├── features/
+│   │   ├── history_store.c         # Reads/writes ~/.terminator_history and updates SHM
+│   │   ├── history_search.c        # Executes Ctrl+R search and formats matching output
+│   │   └── multiwatch.c            # Manages parallel pipes, timestamps, and Ctrl+C cleanup
+│   └── script/
+│       ├── script_validator.c      # Verifies control flow blocks before running script
+│       ├── test_eval.c             # Parses and evaluates POSIX [ ... ] expressions
+│       └── interpreter.c           # Executes script lines, updates $1..$#, handles exit [n]
+│
+└── tests/                          # Standalone unit tests (can run without X11!)
+    ├── test_parser.c               # Tests multiline, quoting, and $(...) expansion
+    ├── test_lcs.c                  # Tests Ctrl+R Longest Common Substring edge cases
+    └── scripts/
+        └── check.sh                # Sample bash script from project specification
