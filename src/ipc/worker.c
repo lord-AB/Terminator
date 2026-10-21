@@ -17,6 +17,9 @@
 #include "exec/shell_ctx.h"
 #include "exec/builtins.h"
 #include "exec/pipeline.h"
+#include "parser/subst.h"
+#include "parser/expand.h"
+#include "parser/lexer.h"
 
 /* ── Initialize a TabWorker to a clean state ────────────────────────── */
 void worker_init(TabWorker *w) {
@@ -81,9 +84,27 @@ void *worker_entry(void *arg) {
             /* Record command in shared history */
             shm_history_add(shared, buf);
 
-            /* Tokenize command line */
+            /* 1. Command substitution $(...) and `...` */
+            char subst_buf[MAX_CMD_LEN];
+            if (subst_expand(ctx, buf, subst_buf, sizeof(subst_buf)) < 0) {
+                const char *err = "terminator: substitution error\n";
+                proto_send(write_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+                ctx->last_status = 1;
+                continue;
+            }
+
+            /* 2. Variable expansion ($VAR, $?, ${VAR}) and line continuation (\\\n) */
+            char expanded_buf[MAX_CMD_LEN];
+            if (expand_variables(ctx, subst_buf, expanded_buf, sizeof(expanded_buf)) < 0) {
+                const char *err = "terminator: expansion error\n";
+                proto_send(write_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+                ctx->last_status = 1;
+                continue;
+            }
+
+            /* 3. Quote-aware tokenization */
             char *argv[MAX_ARGS];
-            int argc = pipeline_tokenize(buf, argv, MAX_ARGS);
+            int argc = lexer_tokenize(expanded_buf, argv, MAX_ARGS);
 
             if (argc == 0) {
                 continue;
@@ -92,6 +113,7 @@ void *worker_entry(void *arg) {
             /* Check if command is a built-in */
             if (builtins_is_builtin(argv[0])) {
                 int res = builtins_exec(ctx, argc, argv, write_fd, shared);
+                lexer_free_tokens(argv, argc);
                 if (res == BUILTIN_EXIT) {
                     TERM_LOG("tab[%d]: exit built-in invoked, exiting", tab_id);
                     break;
@@ -99,6 +121,7 @@ void *worker_entry(void *arg) {
             } else {
                 /* Execute external command via fork + execvp */
                 pipeline_exec_single(ctx, argv, write_fd);
+                lexer_free_tokens(argv, argc);
             }
         }
     }

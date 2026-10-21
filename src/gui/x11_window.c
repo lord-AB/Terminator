@@ -301,7 +301,8 @@ void gui_redraw(GuiState *gui) {
         int stored    = screen_buf_visible_count(sb);
         int x_margin  = 4;
 
-        int content_rows = gui->term_rows - 1; /* reserve bottom row for input */
+        int content_rows = gui->term_rows - 1; /* reserve row for input */
+        if (content_rows < 1) content_rows = 1;
 
         /* Cap scroll_offset so it never scrolls past oldest available lines */
         int max_scroll = (stored > content_rows) ? (stored - content_rows) : 0;
@@ -312,23 +313,24 @@ void gui_redraw(GuiState *gui) {
         /* Calculate visible scrollback window */
         int end = stored - sb->scroll_offset;
         int start = end > content_rows ? (end - content_rows) : 0;
+        int visible_lines = end - start;
 
-        for (int r = 0; r < content_rows; r++) {
+        for (int r = 0; r < visible_lines; r++) {
             int idx = start + r;
-            if (idx >= 0 && idx < end) {
-                const char *line = screen_buf_get_line(sb, idx);
-                if (line && line[0]) {
-                    int y = bar_h + r * gui->char_height + gui->font_ascent;
-                    XSetForeground(dpy, gc, gui->color_fg);
-                    int len = (int)strlen(line);
-                    if (len > gui->term_cols) len = gui->term_cols;
-                    XDrawString(dpy, buf, gc, x_margin, y, line, len);
-                }
+            const char *line = screen_buf_get_line(sb, idx);
+            if (line && line[0]) {
+                int y = bar_h + r * gui->char_height + gui->font_ascent;
+                XSetForeground(dpy, gc, gui->color_fg);
+                int len = (int)strlen(line);
+                if (len > gui->term_cols) len = gui->term_cols;
+                XDrawString(dpy, buf, gc, x_margin, y, line, len);
             }
         }
 
-        /* ── Draw input line (prompt + input + cursor) at bottom ─────────── */
-        int input_row = gui->term_rows - 1;
+        /* ── Draw input line (prompt + input + cursor) ───────────────────── */
+        int input_row = (stored < content_rows && sb->scroll_offset == 0)
+                        ? stored
+                        : content_rows;
         int input_y   = bar_h + input_row * gui->char_height + gui->font_ascent;
 
         /* Prompt (green) */
@@ -364,15 +366,15 @@ void gui_redraw(GuiState *gui) {
                         &sb->input[sb->cursor_pos], 1);
         }
 
-        /* If scrolled up, draw a neat scroll indicator on the right side */
+        /* If scrolled up, draw scroll indicator at top right */
         if (sb->scroll_offset > 0) {
             char scroll_info[64];
             int slen = snprintf(scroll_info, sizeof(scroll_info),
-                                "[Scroll: %d up]", sb->scroll_offset);
+                                "[Scroll: %d up | Shift+Down to bottom]", sb->scroll_offset);
             int badge_x = gui->win_width - (slen + 1) * gui->char_width - 8;
-            if (badge_x > input_x + sb->input_len * gui->char_width + 16) {
+            if (badge_x > 0) {
                 XSetForeground(dpy, gc, gui->color_prompt);
-                XDrawString(dpy, buf, gc, badge_x, input_y, scroll_info, slen);
+                XDrawString(dpy, buf, gc, badge_x, bar_h + gui->font_ascent, scroll_info, slen);
             }
         }
     } else {
@@ -542,35 +544,19 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
         screen_buf_scroll_reset(sb);
         sb->history_idx = -1;
 
+        /* Multiline accumulation */
         if (!sb->in_multiline) {
             sb->multiline_buf[0] = '\0';
-        }
-
-        /* Check if line has trailing backslash */
-        size_t l_len = strlen(current_line);
-        size_t bslash_count = 0;
-        ssize_t bi = (ssize_t)l_len - 1;
-        while (bi >= 0 && current_line[bi] == '\\') {
-            bslash_count++;
-            bi--;
-        }
-        int has_trailing_bslash = (bslash_count % 2 == 1);
-
-        if (has_trailing_bslash) {
-            /* Strip the trailing backslash for line continuation */
-            current_line[l_len - 1] = '\0';
-        }
-
-        size_t mlen = strlen(sb->multiline_buf);
-        if (sb->in_multiline && mlen > 0 && !has_trailing_bslash) {
-            /* If previous line wasn't joined by backslash, append newline */
+        } else {
+            /* If we were already in multiline mode, append newline */
+            size_t mlen = strlen(sb->multiline_buf);
             if (mlen < sizeof(sb->multiline_buf) - 2) {
                 sb->multiline_buf[mlen] = '\n';
                 sb->multiline_buf[mlen + 1] = '\0';
             }
         }
 
-        /* Append current_line to multiline buffer */
+        /* Append current_line as typed to multiline buffer */
         strncat(sb->multiline_buf, current_line,
                 sizeof(sb->multiline_buf) - strlen(sb->multiline_buf) - 1);
 

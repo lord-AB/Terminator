@@ -206,7 +206,53 @@ static int run_verification_test(ExecMode mode) {
         return 1;
     }
 
-    /* 8. Verify shared history */
+    /* 8. Stage 3: Multiline input, command substitution & quoting verification */
+    printf("\n--- Stage 3: Multiline, Quoting & Substitution Verification ---\n");
+
+    /* 8a. Multiline with line continuation */
+    const char *s3_ex1 = "echo \"Isn't process creation exciting?\\\nFork, exec, repeat!\"";
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, s3_ex1, resp, sizeof(resp), &type) != 0) {
+        fprintf(stderr, "FAIL: Stage 3 example 1 did not respond\n");
+        return 1;
+    }
+    printf("[PASS] Example 1 output: \"%s\"", resp);
+    if (strstr(resp, "Isn't process creation exciting?Fork, exec, repeat!") != NULL) {
+        printf("[PASS] Multiline line-continuation verified\n");
+    } else {
+        printf("[FAIL] Unexpected output: \"%s\"\n", resp);
+        return 1;
+    }
+
+    /* 8b. Nested command substitution */
+    const char *s3_ex2 = "echo \"Files in $(basename $(pwd)): $(ls | wc -l)\"";
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, s3_ex2, resp, sizeof(resp), &type) != 0) {
+        fprintf(stderr, "FAIL: Stage 3 example 2 did not respond\n");
+        return 1;
+    }
+    printf("[PASS] Example 2 output: \"%s\"", resp);
+    if (strstr(resp, "Files in tmp:") != NULL) {
+        printf("[PASS] Nested command substitution verified\n");
+    } else {
+        printf("[FAIL] Unexpected output: \"%s\"\n", resp);
+        return 1;
+    }
+
+    /* 8c. Quoting rules (literal single quotes, expanded double quotes) */
+    const char *s3_ex3 = "echo 'literal: $HOME' \"expanded: $HOME\"";
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, s3_ex3, resp, sizeof(resp), &type) != 0) {
+        fprintf(stderr, "FAIL: Stage 3 example 3 did not respond\n");
+        return 1;
+    }
+    printf("[PASS] Example 3 output: \"%s\"", resp);
+    if (strstr(resp, "literal: $HOME") != NULL && strstr(resp, "expanded: ") != NULL &&
+        strstr(resp, "expanded: $HOME") == NULL) {
+        printf("[PASS] Quoting rules verified ($HOME literal in '...', expanded in \"...\")\n");
+    } else {
+        printf("[FAIL] Unexpected output: \"%s\"\n", resp);
+        return 1;
+    }
+
+    /* 9. Verify shared history */
     printf("\n--- History verification ---\n");
     int hist_count = shm_history_count(shared);
     printf("Total commands in history: %d\n", hist_count);
@@ -214,13 +260,13 @@ static int run_verification_test(ExecMode mode) {
         const char *h = shm_history_get(shared, i);
         if (h) printf("  [%d] %s\n", i, h);
     }
-    if (hist_count >= 5) {
+    if (hist_count >= 8) {
         printf("[PASS] Shared history logged all commands from both tabs\n");
     } else {
         printf("[FAIL] History count too low: %d\n", hist_count);
     }
 
-    /* 9. Test exit built-in in Tab 0 */
+    /* 10. Test exit built-in in Tab 0 */
     printf("\n--- Testing 'exit' built-in ---\n");
     if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "exit", resp, sizeof(resp), &type) == 0) {
         if (type == TAB_MSG_EXIT) {
@@ -231,12 +277,12 @@ static int run_verification_test(ExecMode mode) {
     worker_stop(&tabs[1]);
     printf("[PASS] All workers stopped cleanly\n");
 
-    /* 10. Clean up */
+    /* 11. Clean up */
     shm_destroy(shared, mode);
     printf("[PASS] Shared memory destroyed\n");
 
     printf("\n========================================\n");
-    printf("  Stage 2 Verification Complete!\n");
+    printf("  Stage 3 Verification Complete!\n");
     printf("========================================\n\n");
     return 0;
 }

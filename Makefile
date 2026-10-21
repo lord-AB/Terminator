@@ -73,7 +73,7 @@ $(TEST_BIN): tests/test_gui_buffer.c $(BUILDDIR)/gui/screen_buf.o $(BUILDDIR)/gu
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_PARSER_BIN): tests/test_parser.c $(BUILDDIR)/parser/multiline.o
+$(TEST_PARSER_BIN): tests/test_parser.c $(BUILDDIR)/parser/multiline.o $(BUILDDIR)/parser/expand.o $(BUILDDIR)/parser/subst.o $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/shell_ctx.o
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
