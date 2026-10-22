@@ -9,6 +9,7 @@
 #define GUI_SCREEN_BUF_H
 
 #include "common.h"   /* MAX_CMD_LEN, MAX_PATH_LEN */
+#include "input/autocomplete.h"
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                         */
@@ -21,7 +22,7 @@
 /*  ScreenBuf structure                                               */
 /* ------------------------------------------------------------------ */
 
-typedef struct {
+typedef struct ScreenBuf {
     /* ---- Scrollback ring buffer ---------------------------------- */
     char    lines[SCROLLBACK_MAX][LINE_MAXLEN];
     int     count;          /* lines currently stored (0..SCROLLBACK_MAX)  */
@@ -49,6 +50,9 @@ typedef struct {
     /* ---- Reverse history search mode (Ctrl+R) --------------------- */
     int     in_search;            /* 1 if in Ctrl+R search mode       */
     char    saved_prompt[256];
+
+    /* ---- Tab completion state ------------------------------------- */
+    AutocompleteState autocomplete;
 } ScreenBuf;
 
 /* ------------------------------------------------------------------ */
@@ -100,6 +104,9 @@ void screen_buf_input_delete_forward(ScreenBuf *sb);
 
 /* Clear the input buffer entirely. */
 void screen_buf_input_clear(ScreenBuf *sb);
+
+/* Replace a range [start .. start + len - 1] in input with replacement string. */
+void screen_buf_input_replace_range(ScreenBuf *sb, int start, int len, const char *replacement);
 
 /*
  * Commit the current input: build "prompt+input", add it to scrollback,

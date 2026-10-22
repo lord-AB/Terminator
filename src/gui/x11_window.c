@@ -21,6 +21,7 @@
 #include "gui/tab_bar.h"
 #include "gui/clipboard.h"
 #include "input/line_editor.h"
+#include "input/autocomplete.h"
 #include "features/history_search.h"
 #include "features/history_store.h"
 #include "ipc/protocol.h"
@@ -318,6 +319,9 @@ void gui_redraw(GuiState *gui) {
         int x_margin  = 4;
 
         int content_rows = gui->term_rows - 1; /* reserve row for input */
+        if (sb->autocomplete.in_select_mode && sb->autocomplete.menu_text[0] != '\0') {
+            content_rows = gui->term_rows - 2; /* reserve row for input and suggestion */
+        }
         if (content_rows < 1) content_rows = 1;
 
         /* Cap scroll_offset so it never scrolls past oldest available lines */
@@ -380,6 +384,37 @@ void gui_redraw(GuiState *gui) {
             XSetForeground(dpy, gc, gui->color_bg);
             XDrawString(dpy, buf, gc, cursor_x, input_y,
                         &sb->input[sb->cursor_pos], 1);
+        }
+
+        /* ── Autocomplete suggestions displayed directly under cursor ──── */
+        if (sb->autocomplete.in_select_mode && sb->autocomplete.menu_text[0] != '\0') {
+            int menu_len = (int)strlen(sb->autocomplete.menu_text);
+            int menu_w   = menu_len * gui->char_width + 8;
+            int menu_x   = cursor_x;
+            if (menu_x + menu_w > gui->win_width - x_margin) {
+                menu_x = gui->win_width - x_margin - menu_w;
+            }
+            if (menu_x < x_margin) {
+                menu_x = x_margin;
+            }
+
+            int suggest_box_y  = cursor_y + gui->char_height;
+            int suggest_text_y = input_y + gui->char_height;
+
+            /* Background box with border */
+            XSetForeground(dpy, gc, gui->color_tab_inactive);
+            XFillRectangle(dpy, buf, gc, menu_x, suggest_box_y,
+                           (unsigned)menu_w, (unsigned)gui->char_height);
+            XSetForeground(dpy, gc, gui->color_border);
+            XDrawRectangle(dpy, buf, gc, menu_x, suggest_box_y,
+                           (unsigned)menu_w, (unsigned)gui->char_height);
+
+            /* Text in prompt color */
+            int max_chars = (gui->win_width - menu_x - 8) / gui->char_width;
+            int draw_len  = (menu_len > max_chars && max_chars > 0) ? max_chars : menu_len;
+            XSetForeground(dpy, gc, gui->color_prompt);
+            XDrawString(dpy, buf, gc, menu_x + 4, suggest_text_y,
+                        sb->autocomplete.menu_text, draw_len);
         }
 
         /* If scrolled up, draw scroll indicator at top right */
@@ -469,6 +504,9 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
     int    len = XLookupString(ev, buf, sizeof(buf) - 1, &keysym, NULL);
     buf[len] = '\0';
 
+    if (IsModifierKey(keysym))
+        return;
+
     int ctrl  = (ev->state & ControlMask) != 0;
     int shift = (ev->state & ShiftMask) != 0;
     int alt   = (ev->state & Mod1Mask) != 0;
@@ -485,6 +523,7 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
                 proto_send(fd, GUI_MSG_SIGNAL, &sig, sizeof(sig));
             }
             if (sb) {
+                autocomplete_cancel(&sb->autocomplete);
                 if (sb->in_search) {
                     sb->in_search = 0;
                     screen_buf_set_prompt(sb, sb->saved_prompt[0] ? sb->saved_prompt : "user@terminator> ");
@@ -548,6 +587,18 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
     ScreenBuf *sb = gui->tabs[gui->active_tab].screen;
     if (!sb) return;
 
+    /* ── Autocomplete numbered menu selection mode ──────────────────── */
+    if (sb->autocomplete.in_select_mode) {
+        char ch = (len > 0) ? buf[0] : 0;
+        if (autocomplete_handle_key(sb, keysym, ch)) {
+            gui_redraw(gui);
+            return;
+        }
+        /* If autocomplete_handle_key returned 0, autocomplete_cancel was called
+         * and the suggestions are cleared immediately. We fall through so that
+         * whatever key was pressed (a letter, backspace, etc.) is processed normally. */
+    }
+
     /* ── Configurable Hotkeys (line_editor & clipboard actions) ─────── */
     HotkeyAction action = hotkey_cfg_match(&gui->hotkeys, keysym, ev->state);
     if (action != HOTKEY_ACTION_NONE) {
@@ -558,6 +609,12 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
     }
 
     switch (keysym) {
+    case XK_Tab:
+        autocomplete_handle_tab(sb);
+        screen_buf_scroll_reset(sb);
+        gui_redraw(gui);
+        return;
+
     case XK_Return: {
         /* Grab currently typed line */
         char current_line[MAX_CMD_LEN];

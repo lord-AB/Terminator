@@ -260,6 +260,30 @@ void screen_buf_input_clear(ScreenBuf *sb)
     sb->cursor_pos = 0;
 }
 
+void screen_buf_input_replace_range(ScreenBuf *sb, int start, int len, const char *replacement)
+{
+    if (!sb || !replacement)
+        return;
+    if (start < 0 || start > sb->input_len)
+        return;
+    if (len < 0 || start + len > sb->input_len)
+        return;
+
+    size_t rlen = strlen(replacement);
+    int new_len = sb->input_len - len + (int)rlen;
+    if (new_len >= MAX_CMD_LEN)
+        return;
+
+    memmove(&sb->input[start + rlen],
+            &sb->input[start + len],
+            (size_t)(sb->input_len - (start + len) + 1));
+    memcpy(&sb->input[start], replacement, rlen);
+
+    sb->input_len = new_len;
+    sb->cursor_pos = start + (int)rlen;
+    sb->input[sb->input_len] = '\0';
+}
+
 /*
  * screen_buf_input_commit — build "prompt + input", add that combined
  *                           string to scrollback, then clear the input.

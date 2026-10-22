@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <poll.h>
 
 #include "ipc/protocol.h"
@@ -14,6 +15,7 @@
 #include "ipc/worker.h"
 #include "input/hotkey_cfg.h"
 #include "input/line_editor.h"
+#include "input/autocomplete.h"
 #include "features/history_store.h"
 #include "features/history_search.h"
 #include "gui/screen_buf.h"
@@ -690,7 +692,67 @@ int run_verification_test(ExecMode mode) {
         return 1;
     }
 
-    /* 15. Verify shared history count */
+    /* 15. Stage 10: File-Name Auto-Completion Verification */
+    printf("\n--- Stage 10: Auto-Completion Verification ---\n");
+
+    /* Create test directory in /tmp and files: abc.txt, abcd.txt, def.txt */
+    const char *v_ac_dir = "/tmp/v_autocomplete_test";
+    mkdir(v_ac_dir, 0755);
+    char fpath[512];
+    snprintf(fpath, sizeof(fpath), "%s/abc.txt", v_ac_dir);
+    FILE *vf = fopen(fpath, "w"); if (vf) { fprintf(vf, "1\n"); fclose(vf); }
+    snprintf(fpath, sizeof(fpath), "%s/abcd.txt", v_ac_dir);
+    vf = fopen(fpath, "w"); if (vf) { fprintf(vf, "2\n"); fclose(vf); }
+    snprintf(fpath, sizeof(fpath), "%s/def.txt", v_ac_dir);
+    vf = fopen(fpath, "w"); if (vf) { fprintf(vf, "3\n"); fclose(vf); }
+
+    ScreenBuf *ac_sb = screen_buf_create();
+    screen_buf_set_cwd(ac_sb, v_ac_dir);
+
+    /* Test 15a: "./myprog de" + Tab -> completes to "./myprog def.txt" */
+    const char *t1 = "./myprog de";
+    for (int i = 0; t1[i]; i++) screen_buf_input_insert(ac_sb, t1[i]);
+    autocomplete_handle_tab(ac_sb);
+    printf("  Autocomplete './myprog de' -> \"%s\"\n", ac_sb->input);
+    if (strcmp(ac_sb->input, "./myprog def.txt") == 0 && ac_sb->autocomplete.in_select_mode == 0) {
+        printf("[PASS] Single match auto-completed to './myprog def.txt'\n");
+    } else {
+        printf("[FAIL] Single match completion mismatch: \"%s\"\n", ac_sb->input);
+        return 1;
+    }
+
+    /* Test 15b: "./myprog def.txt abc" + Tab -> numbered menu "1. abc.txt   2. abcd.txt" */
+    screen_buf_input_insert(ac_sb, ' ');
+    screen_buf_input_insert(ac_sb, 'a');
+    screen_buf_input_insert(ac_sb, 'b');
+    screen_buf_input_insert(ac_sb, 'c');
+    autocomplete_handle_tab(ac_sb);
+    printf("  Ambiguous menu: %s\n", ac_sb->autocomplete.menu_text);
+    if (ac_sb->autocomplete.in_select_mode == 1 &&
+        strstr(ac_sb->autocomplete.menu_text, "1. abc.txt   2. abcd.txt") != NULL) {
+        printf("[PASS] Ambiguous match displayed numbered menu '1. abc.txt   2. abcd.txt'\n");
+    } else {
+        printf("[FAIL] Ambiguous menu output mismatch\n");
+        return 1;
+    }
+
+    /* Test 15c: press '1' -> selects abc.txt, input becomes "./myprog def.txt abc.txt" */
+    autocomplete_handle_key(ac_sb, XK_1, '1');
+    printf("  After press '1': \"%s\"\n", ac_sb->input);
+    if (strcmp(ac_sb->input, "./myprog def.txt abc.txt") == 0 && ac_sb->autocomplete.in_select_mode == 0) {
+        printf("[PASS] Numbered menu selection '1' completed to './myprog def.txt abc.txt'\n");
+    } else {
+        printf("[FAIL] Numbered menu selection mismatch: \"%s\"\n", ac_sb->input);
+        return 1;
+    }
+
+    screen_buf_destroy(ac_sb);
+    snprintf(fpath, sizeof(fpath), "%s/abc.txt", v_ac_dir); unlink(fpath);
+    snprintf(fpath, sizeof(fpath), "%s/abcd.txt", v_ac_dir); unlink(fpath);
+    snprintf(fpath, sizeof(fpath), "%s/def.txt", v_ac_dir); unlink(fpath);
+    rmdir(v_ac_dir);
+
+    /* 16. Verify shared history count */
     printf("\n--- History verification ---\n");
     int hist_count = shm_history_count(shared);
     printf("Total commands in history: %d\n", hist_count);
@@ -720,7 +782,7 @@ int run_verification_test(ExecMode mode) {
     printf("[PASS] Shared memory destroyed\n");
 
     printf("\n========================================\n");
-    printf("  Stage 9 Verification Complete!\n");
+    printf("  Stage 10 Verification Complete!\n");
     printf("========================================\n\n");
     return 0;
 }
