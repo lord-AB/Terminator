@@ -65,6 +65,30 @@ int expand_variables(ShellContext *ctx, const char *input, char *output, size_t 
                 continue;
             }
 
+            if (isdigit((unsigned char)*p)) {
+                /* $0..$9 positional parameter */
+                char var_name[2] = { *p++, '\0' };
+                const char *val = ctx ? shell_ctx_get_var(ctx, var_name) : NULL;
+                if (!val) val = getenv(var_name);
+                if (val) {
+                    while (*val && out_idx < out_size - 1) {
+                        output[out_idx++] = *val++;
+                    }
+                }
+                continue;
+            }
+
+            if (*p == '#') {
+                /* $# argument count */
+                p++;
+                const char *val = ctx ? shell_ctx_get_var(ctx, "#") : NULL;
+                if (!val) val = "0";
+                while (*val && out_idx < out_size - 1) {
+                    output[out_idx++] = *val++;
+                }
+                continue;
+            }
+
             if (*p == '{') {
                 /* ${VAR} syntax */
                 p++; /* consume '{' */

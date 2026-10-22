@@ -64,10 +64,12 @@ TEST_HOTKEYS_BIN = $(BUILDDIR)/test_hotkeys
 TEST_JOBS_BIN = $(BUILDDIR)/test_jobs
 TEST_LCS_BIN = $(BUILDDIR)/test_lcs
 TEST_AUTOCOMPLETE_BIN = $(BUILDDIR)/test_autocomplete
+TEST_SCRIPT_BIN = $(BUILDDIR)/test_script
 
 EXEC_COMMON_OBJS = $(BUILDDIR)/parser/ast.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/exec/jobs.o $(BUILDDIR)/exec/pipeline.o $(BUILDDIR)/exec/redirect.o $(BUILDDIR)/ipc/protocol.o
+SCRIPT_OBJS = $(BUILDDIR)/script/script_validator.o $(BUILDDIR)/script/test_eval.o $(BUILDDIR)/script/interpreter.o
 
-test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPELINE_BIN) $(TEST_MULTIWATCH_BIN) $(TEST_HOTKEYS_BIN) $(TEST_JOBS_BIN) $(TEST_LCS_BIN) $(TEST_AUTOCOMPLETE_BIN)
+test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPELINE_BIN) $(TEST_MULTIWATCH_BIN) $(TEST_HOTKEYS_BIN) $(TEST_JOBS_BIN) $(TEST_LCS_BIN) $(TEST_AUTOCOMPLETE_BIN) $(TEST_SCRIPT_BIN)
 	@echo "Running GUI unit tests..."
 	./$(TEST_BIN)
 	@echo "Running Multiline & Parser unit tests..."
@@ -86,6 +88,8 @@ test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPEL
 	./$(TEST_LCS_BIN)
 	@echo "Running File-Name Auto-Completion unit tests..."
 	./$(TEST_AUTOCOMPLETE_BIN)
+	@echo "Running Bash Script Interpreter unit tests..."
+	./$(TEST_SCRIPT_BIN)
 	@echo "Running verification echo test (thread mode)..."
 	./$(TARGET) --test
 	@echo "Running verification echo test (process mode)..."
@@ -116,7 +120,7 @@ $(TEST_HOTKEYS_BIN): tests/test_hotkeys.c $(BUILDDIR)/input/hotkey_cfg.o $(BUILD
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_JOBS_BIN): tests/test_jobs.c $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/builtins.o $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/ipc/shm_sync.o $(EXEC_COMMON_OBJS)
+$(TEST_JOBS_BIN): tests/test_jobs.c $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/builtins.o $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/ipc/shm_sync.o $(BUILDDIR)/parser/expand.o $(BUILDDIR)/parser/subst.o $(SCRIPT_OBJS) $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -125,6 +129,10 @@ $(TEST_LCS_BIN): tests/test_lcs.c $(BUILDDIR)/features/history_search.o $(BUILDD
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TEST_AUTOCOMPLETE_BIN): tests/test_autocomplete.c $(BUILDDIR)/input/autocomplete.o $(BUILDDIR)/gui/screen_buf.o
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(TEST_SCRIPT_BIN): tests/test_script.c $(BUILDDIR)/script/script_validator.o $(BUILDDIR)/script/test_eval.o $(BUILDDIR)/script/interpreter.o $(BUILDDIR)/parser/expand.o $(BUILDDIR)/parser/subst.o $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/builtins.o $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/ipc/shm_sync.o $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 

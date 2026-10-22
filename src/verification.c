@@ -752,6 +752,75 @@ int run_verification_test(ExecMode mode) {
     snprintf(fpath, sizeof(fpath), "%s/def.txt", v_ac_dir); unlink(fpath);
     rmdir(v_ac_dir);
 
+    /* ── Stage 11: Bash Script Interpreter Verification ───────────────── */
+    printf("\n--- Stage 11: Bash Script Interpreter Verification ---\n");
+    char v_check_sh[512], v_myprog_c[512];
+    snprintf(v_check_sh, sizeof(v_check_sh), "/tmp/check.sh");
+    snprintf(v_myprog_c, sizeof(v_myprog_c), "/tmp/myprog.c");
+
+    FILE *f_check = fopen(v_check_sh, "w");
+    if (f_check) {
+        fprintf(f_check,
+                "#!/bin/bash\n"
+                "if [ -f \"$1\" ]; then\n"
+                "    echo \"File exists, compiling...\"\n"
+                "    gcc \"$1\" -o myprog\n"
+                "else\n"
+                "    echo \"Source file missing!\"\n"
+                "fi\n");
+        fclose(f_check);
+        chmod(v_check_sh, 0755);
+    }
+
+    FILE *f_c = fopen(v_myprog_c, "w");
+    if (f_c) {
+        fprintf(f_c, "#include <stdio.h>\nint main(void) { return 0; }\n");
+        fclose(f_c);
+    }
+
+    /* Test 16a: "./check.sh myprog.c" */
+    send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "./check.sh myprog.c", resp, sizeof(resp), &type);
+    printf("  ./check.sh myprog.c output: \"%s\"\n", resp);
+    if (strstr(resp, "File exists, compiling...") != NULL) {
+        printf("[PASS] ./check.sh myprog.c verified\n");
+    } else {
+        printf("[FAIL] ./check.sh myprog.c output mismatch\n");
+        return 1;
+    }
+
+    /* Test 16b: "bash check.sh nothere.c" */
+    send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "bash check.sh nothere.c", resp, sizeof(resp), &type);
+    printf("  bash check.sh nothere.c output: \"%s\"\n", resp);
+    if (strstr(resp, "Source file missing!") != NULL) {
+        printf("[PASS] bash check.sh nothere.c verified\n");
+    } else {
+        printf("[FAIL] bash check.sh nothere.c output mismatch\n");
+        return 1;
+    }
+
+    /* Test 16c: Pre-execution syntax error on missing fi */
+    char v_bad_sh[512];
+    snprintf(v_bad_sh, sizeof(v_bad_sh), "/tmp/bad.sh");
+    FILE *f_bad = fopen(v_bad_sh, "w");
+    if (f_bad) {
+        fprintf(f_bad, "#!/bin/bash\nif [ -f \"$1\" ]; then\n    echo \"Fail\"\n");
+        fclose(f_bad);
+        chmod(v_bad_sh, 0755);
+    }
+    send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "./bad.sh file.txt", resp, sizeof(resp), &type);
+    printf("  ./bad.sh syntax error output: \"%s\"\n", resp);
+    if (strstr(resp, "syntax error") != NULL && strstr(resp, "Fail") == NULL) {
+        printf("[PASS] Pre-run syntax error detected without executing script\n");
+    } else {
+        printf("[FAIL] Syntax error reporting mismatch\n");
+        return 1;
+    }
+
+    unlink(v_check_sh);
+    unlink(v_myprog_c);
+    unlink(v_bad_sh);
+    unlink("/tmp/myprog");
+
     /* 16. Verify shared history count */
     printf("\n--- History verification ---\n");
     int hist_count = shm_history_count(shared);
@@ -782,7 +851,7 @@ int run_verification_test(ExecMode mode) {
     printf("[PASS] Shared memory destroyed\n");
 
     printf("\n========================================\n");
-    printf("  Stage 10 Verification Complete!\n");
+    printf("  Stage 11 Verification Complete!\n");
     printf("========================================\n\n");
     return 0;
 }

@@ -5,6 +5,7 @@
 #include "exec/redirect.h"
 #include "exec/jobs.h"
 #include "features/multiwatch.h"
+#include "script/interpreter.h"
 #include "ipc/protocol.h"
 
 #include <stdio.h>
@@ -31,7 +32,8 @@ int builtins_is_builtin(const char *cmd) {
         strcmp(cmd, "jobs") == 0 ||
         strcmp(cmd, "fg") == 0 ||
         strcmp(cmd, "bg") == 0 ||
-        strcmp(cmd, "source") == 0) {
+        strcmp(cmd, "source") == 0 ||
+        strcmp(cmd, ".") == 0) {
         return 1;
     }
     return 0;
@@ -222,11 +224,14 @@ int builtin_bg(ShellContext *ctx, int argc, char *argv[], int out_fd) {
 }
 
 int builtin_source(ShellContext *ctx, int argc, char *argv[], int out_fd) {
-    (void)argc;
-    (void)argv;
-    send_output(out_fd, "source: will be fully implemented in Task 11\n");
-    ctx->last_status = BUILTIN_SUCCESS;
-    return BUILTIN_SUCCESS;
+    if (argc < 2 || !argv[1]) {
+        send_output(out_fd, "terminator: source: filename argument required\n");
+        ctx->last_status = 1;
+        return 1;
+    }
+    int res = interpreter_run_file(ctx, argv[1], argc - 1, &argv[1], 1 /* is_source */, out_fd);
+    ctx->last_status = res;
+    return res;
 }
 
 int builtins_exec(ShellContext *ctx, int argc, char *argv[], int out_fd, SharedState *shared) {
@@ -253,7 +258,7 @@ int builtins_exec(ShellContext *ctx, int argc, char *argv[], int out_fd, SharedS
     if (strcmp(argv[0], "bg") == 0) {
         return builtin_bg(ctx, argc, argv, out_fd);
     }
-    if (strcmp(argv[0], "source") == 0) {
+    if (strcmp(argv[0], "source") == 0 || strcmp(argv[0], ".") == 0) {
         return builtin_source(ctx, argc, argv, out_fd);
     }
 

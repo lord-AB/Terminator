@@ -24,6 +24,7 @@
 #include "parser/lexer.h"
 #include "parser/ast.h"
 #include "features/history_store.h"
+#include "script/interpreter.h"
 
 /* ── Initialize a TabWorker to a clean state ────────────────────────── */
 void worker_init(TabWorker *w) {
@@ -152,6 +153,16 @@ void *worker_entry(void *arg) {
                     pipeline_free(&pl);
                     break;
                 }
+            } else if (pl.num_commands == 1 && pl.commands[0].argc > 0 &&
+                       strcmp(pl.commands[0].argv[0], "bash") == 0 && pl.commands[0].argc >= 2) {
+                interpreter_run_file(ctx, pl.commands[0].argv[1],
+                                     pl.commands[0].argc - 1,
+                                     &pl.commands[0].argv[1], 0, write_fd);
+            } else if (pl.num_commands == 1 && pl.commands[0].argc > 0 &&
+                       interpreter_is_script(ctx, pl.commands[0].argv[0])) {
+                interpreter_run_file(ctx, pl.commands[0].argv[0],
+                                     pl.commands[0].argc,
+                                     pl.commands[0].argv, 0, write_fd);
             } else {
                 /* Execute pipeline (1 or more commands connected by pipes, with redirections) */
                 pipeline_exec_pipeline(ctx, &pl, write_fd);
