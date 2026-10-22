@@ -48,4 +48,11 @@ int pipeline_exec_cmd(ShellContext *ctx, Command *cmd, int out_fd);
  */
 int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd);
 
+/*
+ * Waits for a foreground process group while streaming output and multiplexing
+ * Ctrl+C (SIGINT) and Ctrl+Z (SIGTSTP) from in_fd.
+ */
+int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int num_pids,
+                             const char *cmd_str, int capture_fd, int out_fd, int in_fd);
+
 #endif /* EXEC_PIPELINE_H */

@@ -3,6 +3,7 @@
  */
 #include "exec/pipeline.h"
 #include "exec/redirect.h"
+#include "exec/jobs.h"
 #include "ipc/protocol.h"
 
 #include <stdio.h>
@@ -11,6 +12,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <signal.h>
+#include <poll.h>
 #include <errno.h>
 #include <glob.h>
 
@@ -133,6 +136,154 @@ int pipeline_exec_cmd(ShellContext *ctx, Command *cmd, int out_fd) {
     return pipeline_exec_pipeline(ctx, &pl, out_fd);
 }
 
+int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int num_pids,
+                             const char *cmd_str, int capture_fd, int out_fd, int in_fd) {
+    if (!ctx || num_pids <= 0) return 0;
+
+    int last_status = 0;
+    char read_buf[PIPE_BUF_SIZE];
+
+    while (1) {
+        struct pollfd pfds[2];
+        int nfds = 0;
+        int cap_idx = -1;
+        int in_idx = -1;
+
+        if (capture_fd >= 0) {
+            cap_idx = nfds;
+            pfds[nfds].fd = capture_fd;
+            pfds[nfds].events = POLLIN;
+            pfds[nfds].revents = 0;
+            nfds++;
+        }
+
+        if (in_fd >= 0) {
+            in_idx = nfds;
+            pfds[nfds].fd = in_fd;
+            pfds[nfds].events = POLLIN;
+            pfds[nfds].revents = 0;
+            nfds++;
+        }
+
+        poll(pfds, nfds, 50);
+
+        /* 1. Check for GUI signals (Ctrl+C, Ctrl+Z, Close) on in_fd */
+        if (in_idx >= 0 && (pfds[in_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
+            uint32_t msg_type = 0, msg_len = 0;
+            char in_buf[MAX_CMD_LEN];
+            if (proto_recv(in_fd, &msg_type, in_buf, sizeof(in_buf), &msg_len) == 0) {
+                if (msg_type == GUI_MSG_SIGNAL) {
+                    int sig = SIGINT;
+                    if (msg_len >= sizeof(int)) memcpy(&sig, in_buf, sizeof(int));
+
+                    if (sig == SIGINT) {
+                        /* Ctrl+C: stop the running command */
+                        kill(-pgid, SIGINT);
+                        if (out_fd >= 0) {
+                            proto_send(out_fd, TAB_MSG_OUTPUT, "^C\n", 3);
+                        }
+                        for (int i = 0; i < num_pids; i++) {
+                            int st = 0;
+                            waitpid(pids[i], &st, 0);
+                        }
+                        if (capture_fd >= 0) close(capture_fd);
+                        ctx->last_status = 130;
+                        return 130;
+                    } else if (sig == SIGTSTP) {
+                        /* Ctrl+Z: suspend the running command */
+                        kill(-pgid, SIGTSTP);
+                        int status = 0;
+                        waitpid(-pgid, &status, WUNTRACED);
+                        Job *j = jobs_find_by_pgid(ctx->jobs, pgid);
+                        if (!j) {
+                            j = jobs_add(ctx->jobs, pgid, pids, num_pids, cmd_str, JOB_STATE_STOPPED, capture_fd);
+                        } else {
+                            j->state = JOB_STATE_STOPPED;
+                            j->is_current = 1;
+                        }
+                        char stop_msg[MAX_CMD_LEN + 64];
+                        snprintf(stop_msg, sizeof(stop_msg), "^Z\n[%d]+  Stopped                 %s\n",
+                                 j ? j->job_id : 1, cmd_str);
+                        if (out_fd >= 0) {
+                            proto_send(out_fd, TAB_MSG_OUTPUT, stop_msg, (uint32_t)strlen(stop_msg));
+                        }
+                        ctx->last_status = 148;
+                        return 148;
+                    }
+                } else if (msg_type == GUI_MSG_CLOSE) {
+                    kill(-pgid, SIGHUP);
+                    kill(-pgid, SIGKILL);
+                    if (capture_fd >= 0) close(capture_fd);
+                    return 1;
+                }
+            }
+        }
+
+        /* 2. Check for output from child capture pipe */
+        if (cap_idx >= 0 && (pfds[cap_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
+            ssize_t n = read(capture_fd, read_buf, sizeof(read_buf) - 1);
+            if (n > 0) {
+                read_buf[n] = '\0';
+                if (out_fd >= 0) {
+                    proto_send(out_fd, TAB_MSG_OUTPUT, read_buf, (uint32_t)n);
+                }
+            } else if (n == 0 || (pfds[cap_idx].revents & (POLLHUP | POLLERR))) {
+                close(capture_fd);
+                capture_fd = -1;
+            }
+        }
+
+        /* 3. Check child process termination or stop */
+        int any_running = 0;
+        for (int i = 0; i < num_pids; i++) {
+            int status = 0;
+            pid_t r = waitpid(pids[i], &status, WNOHANG | WUNTRACED);
+            if (r == 0) {
+                any_running = 1;
+            } else if (r > 0) {
+                if (WIFSTOPPED(status)) {
+                    Job *j = jobs_find_by_pgid(ctx->jobs, pgid);
+                    if (!j) {
+                        j = jobs_add(ctx->jobs, pgid, pids, num_pids, cmd_str, JOB_STATE_STOPPED, capture_fd);
+                    } else {
+                        j->state = JOB_STATE_STOPPED;
+                        j->is_current = 1;
+                    }
+                    char stop_msg[MAX_CMD_LEN + 64];
+                    snprintf(stop_msg, sizeof(stop_msg), "^Z\n[%d]+  Stopped                 %s\n",
+                             j ? j->job_id : 1, cmd_str);
+                    if (out_fd >= 0) {
+                        proto_send(out_fd, TAB_MSG_OUTPUT, stop_msg, (uint32_t)strlen(stop_msg));
+                    }
+                    ctx->last_status = 128 + WSTOPSIG(status);
+                    return ctx->last_status;
+                }
+                if (i == num_pids - 1) {
+                    if (WIFEXITED(status)) last_status = WEXITSTATUS(status);
+                    else if (WIFSIGNALED(status)) last_status = 128 + WTERMSIG(status);
+                }
+            }
+        }
+
+        if (!any_running) {
+            /* Drain any remaining output from capture_fd */
+            if (capture_fd >= 0) {
+                ssize_t n;
+                while ((n = read(capture_fd, read_buf, sizeof(read_buf) - 1)) > 0) {
+                    read_buf[n] = '\0';
+                    if (out_fd >= 0) proto_send(out_fd, TAB_MSG_OUTPUT, read_buf, (uint32_t)n);
+                }
+                close(capture_fd);
+                capture_fd = -1;
+            }
+            break;
+        }
+    }
+
+    ctx->last_status = last_status;
+    return last_status;
+}
+
 int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
     if (!ctx || !pl || pl->num_commands <= 0) return 0;
 
@@ -168,8 +319,24 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
         return 1;
     }
 
-    /* Fork N children */
+    /* Build command string for job table display if not set */
+    if (pl->cmd_str[0] == '\0') {
+        size_t off = 0;
+        for (int i = 0; i < N && off < sizeof(pl->cmd_str) - 16; i++) {
+            if (i > 0) off += snprintf(pl->cmd_str + off, sizeof(pl->cmd_str) - off, " | ");
+            for (int k = 0; k < pl->commands[i].argc && off < sizeof(pl->cmd_str) - 16; k++) {
+                if (k > 0) off += snprintf(pl->cmd_str + off, sizeof(pl->cmd_str) - off, " ");
+                off += snprintf(pl->cmd_str + off, sizeof(pl->cmd_str) - off, "%s", pl->commands[i].argv[k]);
+            }
+        }
+        if (pl->is_background && off < sizeof(pl->cmd_str) - 4) {
+            snprintf(pl->cmd_str + off, sizeof(pl->cmd_str) - off, " &");
+        }
+    }
+
+    /* Fork N children into a single process group */
     pid_t pids[MAX_COMMANDS_IN_PIPELINE];
+    pid_t pgid = 0;
     for (int i = 0; i < N; i++) {
         pids[i] = fork();
         if (pids[i] < 0) {
@@ -187,7 +354,12 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
         }
 
         if (pids[i] == 0) {
-            /* ── Child process i ── */
+            /* Child process i: join pipeline process group */
+            if (i == 0) {
+                setpgid(0, 0);
+            } else {
+                setpgid(0, pgid);
+            }
 
             /* 1. Wire stdin: if i > 0, read from previous pipe */
             if (i > 0) {
@@ -245,6 +417,14 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
             fflush(stderr);
             _exit(127);
         }
+
+        /* Parent process */
+        if (i == 0) {
+            pgid = pids[0];
+            setpgid(pids[0], pids[0]);
+        } else {
+            setpgid(pids[i], pgid);
+        }
     }
 
     /* ── Parent process (tab worker) ── */
@@ -255,42 +435,23 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
         close(pipes[j][1]);
     }
 
-    /* 2. Close capture pipe write end in parent so reader gets EOF when children terminate */
+    /* 2. Close capture pipe write end in parent */
     close(capture_pipe[1]);
 
-    /* 3. Stream output from capture_pipe[0] to out_fd (GUI) */
-    char buf[PIPE_BUF_SIZE];
-    ssize_t n;
-    while ((n = read(capture_pipe[0], buf, sizeof(buf) - 1)) > 0) {
-        buf[n] = '\0';
+    /* 3. If background job (cmd &): add to job table, print [job_id] <pgid>, return without waiting */
+    if (pl->is_background) {
+        Job *j = jobs_add(ctx->jobs, pgid, pids, N, pl->cmd_str, JOB_STATE_RUNNING, capture_pipe[0]);
+        char bg_msg[64];
+        snprintf(bg_msg, sizeof(bg_msg), "[%d] %d\n", j ? j->job_id : 1, (int)pgid);
         if (out_fd >= 0) {
-            proto_send(out_fd, TAB_MSG_OUTPUT, buf, (uint32_t)n);
+            proto_send(out_fd, TAB_MSG_OUTPUT, bg_msg, (uint32_t)strlen(bg_msg));
         }
-    }
-    close(capture_pipe[0]);
-
-    /* 4. Wait for all N children */
-    int last_status = 0;
-    for (int i = 0; i < N; i++) {
-        int status = 0;
-        while (waitpid(pids[i], &status, 0) < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
-        /* Bash pipeline exit status rule: $? is the exit code of the last command */
-        if (i == N - 1) {
-            if (WIFEXITED(status)) {
-                last_status = WEXITSTATUS(status);
-            } else if (WIFSIGNALED(status)) {
-                last_status = 128 + WTERMSIG(status);
-            } else {
-                last_status = 1;
-            }
-        }
+        ctx->last_status = 0;
+        return 0;
     }
 
-    ctx->last_status = last_status;
-    return last_status;
+    /* 4. Foreground execution: wait, stream output, and multiplex signals */
+    return pipeline_wait_foreground(ctx, pgid, pids, N, pl->cmd_str, capture_pipe[0], out_fd, ctx->in_fd);
 }
 
 int pipeline_exec_single(ShellContext *ctx, char *argv[], int out_fd) {

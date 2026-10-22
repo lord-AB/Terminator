@@ -3,6 +3,7 @@
  */
 #include "exec/builtins.h"
 #include "exec/redirect.h"
+#include "exec/jobs.h"
 #include "features/multiwatch.h"
 #include "ipc/protocol.h"
 
@@ -187,25 +188,37 @@ int builtin_multiwatch(ShellContext *ctx, int argc, char *argv[], int out_fd) {
 int builtin_jobs(ShellContext *ctx, int argc, char *argv[], int out_fd) {
     (void)argc;
     (void)argv;
-    send_output(out_fd, "jobs: will be fully implemented in Task 8\n");
+    if (!ctx || !ctx->jobs) return BUILTIN_SUCCESS;
+    jobs_list(ctx->jobs, out_fd);
     ctx->last_status = BUILTIN_SUCCESS;
     return BUILTIN_SUCCESS;
 }
 
 int builtin_fg(ShellContext *ctx, int argc, char *argv[], int out_fd) {
-    (void)argc;
-    (void)argv;
-    send_output(out_fd, "fg: will be fully implemented in Task 8\n");
-    ctx->last_status = BUILTIN_SUCCESS;
-    return BUILTIN_SUCCESS;
+    if (!ctx || !ctx->jobs) return BUILTIN_ERROR;
+    int job_id = 0;
+    if (argc >= 2 && argv[1]) {
+        const char *p = argv[1];
+        if (*p == '%') p++;
+        job_id = atoi(p);
+    }
+    int in_fd = ctx ? ctx->in_fd : -1;
+    int res = jobs_fg(ctx, ctx->jobs, job_id, out_fd, in_fd);
+    ctx->last_status = res;
+    return res;
 }
 
 int builtin_bg(ShellContext *ctx, int argc, char *argv[], int out_fd) {
-    (void)argc;
-    (void)argv;
-    send_output(out_fd, "bg: will be fully implemented in Task 8\n");
-    ctx->last_status = BUILTIN_SUCCESS;
-    return BUILTIN_SUCCESS;
+    if (!ctx || !ctx->jobs) return BUILTIN_ERROR;
+    int job_id = 0;
+    if (argc >= 2 && argv[1]) {
+        const char *p = argv[1];
+        if (*p == '%') p++;
+        job_id = atoi(p);
+    }
+    int res = jobs_bg(ctx->jobs, job_id, out_fd);
+    ctx->last_status = res;
+    return res;
 }
 
 int builtin_source(ShellContext *ctx, int argc, char *argv[], int out_fd) {

@@ -30,6 +30,7 @@ typedef struct Pipeline {
     Command commands[MAX_COMMANDS_IN_PIPELINE];
     int     num_commands;
     int     is_background;  /* 1 if command ended with '&' */
+    char    cmd_str[MAX_CMD_LEN];
 } Pipeline;
 
 /*

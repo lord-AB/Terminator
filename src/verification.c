@@ -512,7 +512,117 @@ int run_verification_test(ExecMode mode) {
     }
     unlink(v_rc);
 
-    /* 13. Verify shared history */
+    /* 13. Stage 8: Signals & Job Control Verification */
+    printf("\n--- Stage 8: Signals & Job Control Verification ---\n");
+
+    /* 13a. Section 10 transcript test: sleep 100 -> Ctrl+Z -> bg %1 -> fg %1 -> Ctrl+C */
+    printf("Testing exact Section 10 transcript:\n");
+    if (proto_send(tabs[0].gui_write_fd, GUI_MSG_LINE, "sleep 100", 9) != TERM_OK) {
+        printf("[FAIL] Failed to send 'sleep 100'\n");
+        return 1;
+    }
+    usleep(100000); /* 100ms for sleep 100 to start */
+
+    int sig_tstp = SIGTSTP;
+    proto_send(tabs[0].gui_write_fd, GUI_MSG_SIGNAL, (const char *)&sig_tstp, sizeof(int));
+
+    uint32_t jtype = 0, jlen = 0;
+    char jbuf[512] = {0};
+    if (proto_recv(tabs[0].gui_read_fd, &jtype, jbuf, sizeof(jbuf) - 1, &jlen) < 0) {
+        printf("[FAIL] Failed to receive Ctrl+Z response\n");
+        return 1;
+    }
+    jbuf[jlen] = '\0';
+    printf("  Got: %s", jbuf);
+    if (strstr(jbuf, "^Z") != NULL && strstr(jbuf, "[1]+  Stopped") != NULL && strstr(jbuf, "sleep 100") != NULL) {
+        printf("[PASS] Ctrl+Z suspended foreground job and formatted [1]+  Stopped\n");
+    } else {
+        printf("[FAIL] Ctrl+Z response mismatch: %s\n", jbuf);
+        return 1;
+    }
+
+    /* 13b. bg %1 */
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "bg %1", jbuf, sizeof(jbuf), &jtype) != 0) {
+        printf("[FAIL] Failed to send 'bg %%1'\n");
+        return 1;
+    }
+    printf("  Got: %s", jbuf);
+    if (strstr(jbuf, "[1]+ sleep 100 &") != NULL) {
+        printf("[PASS] 'bg %%1' resumed job in background\n");
+    } else {
+        printf("[FAIL] 'bg %%1' output mismatch: %s\n", jbuf);
+        return 1;
+    }
+
+    /* 13c. jobs command */
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "jobs", jbuf, sizeof(jbuf), &jtype) != 0) {
+        printf("[FAIL] Failed to send 'jobs'\n");
+        return 1;
+    }
+    printf("  Got: %s", jbuf);
+    if (strstr(jbuf, "[1]+  Running") != NULL && strstr(jbuf, "sleep 100 &") != NULL) {
+        printf("[PASS] 'jobs' command displayed running background job\n");
+    } else {
+        printf("[FAIL] 'jobs' command output mismatch: %s\n", jbuf);
+        return 1;
+    }
+
+    /* 13d. fg %1 and Ctrl+C interrupt */
+    if (proto_send(tabs[0].gui_write_fd, GUI_MSG_LINE, "fg %1", 5) != TERM_OK) {
+        printf("[FAIL] Failed to send 'fg %%1'\n");
+        return 1;
+    }
+    usleep(100000); /* 100ms for fg to resume and enter foreground wait */
+
+    int sig_int = SIGINT;
+    proto_send(tabs[0].gui_write_fd, GUI_MSG_SIGNAL, (const char *)&sig_int, sizeof(int));
+
+    /* Collect fg output: "sleep 100\n" and "^C\n" */
+    memset(jbuf, 0, sizeof(jbuf));
+    size_t fg_total = 0;
+    struct pollfd fg_pfd = { .fd = tabs[0].gui_read_fd, .events = POLLIN, .revents = 0 };
+    while (fg_total < sizeof(jbuf) - 1) {
+        if (poll(&fg_pfd, 1, 1000) <= 0) break;
+        uint32_t clen = 0;
+        if (proto_recv(tabs[0].gui_read_fd, &jtype, jbuf + fg_total, sizeof(jbuf) - 1 - fg_total, &clen) < 0) break;
+        fg_total += clen;
+        jbuf[fg_total] = '\0';
+        if (strstr(jbuf, "^C") != NULL) break;
+    }
+    printf("  Got: %s", jbuf);
+    if (strstr(jbuf, "sleep 100") != NULL && strstr(jbuf, "^C") != NULL) {
+        printf("[PASS] 'fg %%1' brought job to foreground and Ctrl+C terminated it\n");
+    } else {
+        printf("[FAIL] fg/Ctrl+C output mismatch: %s\n", jbuf);
+        return 1;
+    }
+
+    /* 13e. Background execution (cmd &) and non-blocking reap */
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "sleep 1 &", jbuf, sizeof(jbuf), &jtype) != 0) {
+        printf("[FAIL] Failed to run 'sleep 1 &'\n");
+        return 1;
+    }
+    printf("  Got: %s", jbuf);
+    if (jbuf[0] == '[' && strchr(jbuf, ']') != NULL) {
+        printf("[PASS] 'sleep 1 &' started in background without blocking\n");
+    } else {
+        printf("[FAIL] 'sleep 1 &' output mismatch: %s\n", jbuf);
+        return 1;
+    }
+
+    /* Wait 1.2s for sleep 1 to terminate, then trigger status check with empty line */
+    usleep(1200000);
+    if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "", jbuf, sizeof(jbuf), &jtype) == 0) {
+        printf("  Got: %s", jbuf);
+        if (strstr(jbuf, "Done") != NULL && strstr(jbuf, "sleep 1") != NULL) {
+            printf("[PASS] Background job non-blocking reap and notification verified\n");
+        } else {
+            printf("[FAIL] Background job reap message mismatch: %s\n", jbuf);
+            return 1;
+        }
+    }
+
+    /* 14. Verify shared history */
     printf("\n--- History verification ---\n");
     int hist_count = shm_history_count(shared);
     printf("Total commands in history: %d\n", hist_count);
@@ -520,13 +630,13 @@ int run_verification_test(ExecMode mode) {
         const char *h = shm_history_get(shared, i);
         if (h) printf("  [%d] %s\n", i, h);
     }
-    if (hist_count >= 17) {
+    if (hist_count >= 20) {
         printf("[PASS] Shared history logged all commands from both tabs\n");
     } else {
         printf("[FAIL] History count too low: %d\n", hist_count);
     }
 
-    /* 14. Test exit built-in in Tab 0 */
+    /* 15. Test exit built-in in Tab 0 */
     printf("\n--- Testing 'exit' built-in ---\n");
     if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "exit", resp, sizeof(resp), &type) == 0) {
         if (type == TAB_MSG_EXIT) {
@@ -537,12 +647,12 @@ int run_verification_test(ExecMode mode) {
     worker_stop(&tabs[1]);
     printf("[PASS] All workers stopped cleanly\n");
 
-    /* 15. Clean up */
+    /* 16. Clean up */
     shm_destroy(shared, mode);
     printf("[PASS] Shared memory destroyed\n");
 
     printf("\n========================================\n");
-    printf("  Stage 7 Verification Complete!\n");
+    printf("  Stage 8 Verification Complete!\n");
     printf("========================================\n\n");
     return 0;
 }

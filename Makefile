@@ -61,8 +61,11 @@ TEST_REDIRECT_BIN = $(BUILDDIR)/test_redirect
 TEST_PIPELINE_BIN = $(BUILDDIR)/test_pipeline
 TEST_MULTIWATCH_BIN = $(BUILDDIR)/test_multiwatch
 TEST_HOTKEYS_BIN = $(BUILDDIR)/test_hotkeys
+TEST_JOBS_BIN = $(BUILDDIR)/test_jobs
 
-test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPELINE_BIN) $(TEST_MULTIWATCH_BIN) $(TEST_HOTKEYS_BIN)
+EXEC_COMMON_OBJS = $(BUILDDIR)/parser/ast.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/exec/jobs.o $(BUILDDIR)/exec/pipeline.o $(BUILDDIR)/exec/redirect.o $(BUILDDIR)/ipc/protocol.o
+
+test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPELINE_BIN) $(TEST_MULTIWATCH_BIN) $(TEST_HOTKEYS_BIN) $(TEST_JOBS_BIN)
 	@echo "Running GUI unit tests..."
 	./$(TEST_BIN)
 	@echo "Running Multiline & Parser unit tests..."
@@ -75,6 +78,8 @@ test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPEL
 	./$(TEST_MULTIWATCH_BIN)
 	@echo "Running Hotkeys & Keybindings unit tests..."
 	./$(TEST_HOTKEYS_BIN)
+	@echo "Running Signals & Job Control unit tests..."
+	./$(TEST_JOBS_BIN)
 	@echo "Running verification echo test (thread mode)..."
 	./$(TARGET) --test
 	@echo "Running verification echo test (process mode)..."
@@ -85,23 +90,27 @@ $(TEST_BIN): tests/test_gui_buffer.c $(BUILDDIR)/gui/screen_buf.o $(BUILDDIR)/gu
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_PARSER_BIN): tests/test_parser.c $(BUILDDIR)/parser/multiline.o $(BUILDDIR)/parser/expand.o $(BUILDDIR)/parser/subst.o $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/shell_ctx.o
+$(TEST_PARSER_BIN): tests/test_parser.c $(BUILDDIR)/parser/multiline.o $(BUILDDIR)/parser/expand.o $(BUILDDIR)/parser/subst.o $(BUILDDIR)/parser/lexer.o $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_REDIRECT_BIN): tests/test_redirect.c $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/parser/ast.o $(BUILDDIR)/exec/redirect.o $(BUILDDIR)/exec/pipeline.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/ipc/protocol.o
+$(TEST_REDIRECT_BIN): tests/test_redirect.c $(BUILDDIR)/parser/lexer.o $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_PIPELINE_BIN): tests/test_pipeline.c $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/parser/ast.o $(BUILDDIR)/exec/redirect.o $(BUILDDIR)/exec/pipeline.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/ipc/protocol.o
+$(TEST_PIPELINE_BIN): tests/test_pipeline.c $(BUILDDIR)/parser/lexer.o $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_MULTIWATCH_BIN): tests/test_multiwatch.c $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/ipc/protocol.o
+$(TEST_MULTIWATCH_BIN): tests/test_multiwatch.c $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/parser/lexer.o $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(TEST_HOTKEYS_BIN): tests/test_hotkeys.c $(BUILDDIR)/input/hotkey_cfg.o $(BUILDDIR)/input/line_editor.o $(BUILDDIR)/gui/screen_buf.o $(BUILDDIR)/gui/clipboard.o $(BUILDDIR)/ipc/shm_sync.o
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(TEST_JOBS_BIN): tests/test_jobs.c $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/builtins.o $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/ipc/shm_sync.o $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 

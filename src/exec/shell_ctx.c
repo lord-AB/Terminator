@@ -2,6 +2,7 @@
  * shell_ctx.c — Implementation of per-tab shell execution context
  */
 #include "exec/shell_ctx.h"
+#include "exec/jobs.h"
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -15,6 +16,7 @@ ShellContext *shell_ctx_create(int tab_id) {
     ctx->out_fd = -1;
     ctx->last_status = 0;
     ctx->num_vars = 0;
+    ctx->jobs = jobs_create();
 
     /* Initialize virtual working directory to current process directory */
     if (!getcwd(ctx->cwd, sizeof(ctx->cwd))) {
@@ -67,5 +69,9 @@ void shell_ctx_set_cwd(ShellContext *ctx, const char *new_cwd) {
 
 void shell_ctx_destroy(ShellContext *ctx) {
     if (!ctx) return;
+    if (ctx->jobs) {
+        jobs_destroy(ctx->jobs);
+        ctx->jobs = NULL;
+    }
     free(ctx);
 }

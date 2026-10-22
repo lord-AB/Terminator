@@ -17,6 +17,7 @@
 #include "exec/shell_ctx.h"
 #include "exec/builtins.h"
 #include "exec/pipeline.h"
+#include "exec/jobs.h"
 #include "exec/redirect.h"
 #include "parser/subst.h"
 #include "parser/expand.h"
@@ -86,6 +87,9 @@ void *worker_entry(void *arg) {
         }
 
         if (msg_type == GUI_MSG_LINE) {
+            /* Reap and report any completed background jobs */
+            jobs_check_status(ctx->jobs, write_fd);
+
             /* Skip empty lines */
             if (msg_len == 0 || buf[0] == '\0') {
                 continue;
@@ -130,6 +134,8 @@ void *worker_entry(void *arg) {
                 continue;
             }
             lexer_free_tokens(tokens, num_tokens);
+            strncpy(pl.cmd_str, buf, sizeof(pl.cmd_str) - 1);
+            pl.cmd_str[sizeof(pl.cmd_str) - 1] = '\0';
 
             if (pl.num_commands == 0) {
                 pipeline_free(&pl);

@@ -499,6 +499,18 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
         return;
     }
 
+    /* ── Ctrl+Z: suspend current foreground job ─────────────────────── */
+    if (ctrl && (keysym == XK_z || keysym == XK_Z)) {
+        if (gui->active_tab >= 0 && gui->tabs[gui->active_tab].in_use) {
+            int fd = gui->tabs[gui->active_tab].worker.gui_write_fd;
+            if (fd >= 0) {
+                int sig = SIGTSTP;
+                proto_send(fd, GUI_MSG_SIGNAL, &sig, sizeof(sig));
+            }
+        }
+        return;
+    }
+
     /* ── Ctrl+T / Cmd+T: new tab ───────────────────────────────────── */
     if ((ctrl || cmd) && (keysym == XK_t || keysym == XK_T)) {
         gui_open_tab(gui);
