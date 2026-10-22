@@ -45,6 +45,10 @@ typedef struct {
     /* ---- Command history browsing --------------------------------- */
     int     history_idx;          /* -1 = not browsing, >= 0 = index  */
     char    saved_input[MAX_CMD_LEN];
+
+    /* ---- Reverse history search mode (Ctrl+R) --------------------- */
+    int     in_search;            /* 1 if in Ctrl+R search mode       */
+    char    saved_prompt[256];
 } ScreenBuf;
 
 /* ------------------------------------------------------------------ */

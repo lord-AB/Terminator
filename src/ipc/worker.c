@@ -23,6 +23,7 @@
 #include "parser/expand.h"
 #include "parser/lexer.h"
 #include "parser/ast.h"
+#include "features/history_store.h"
 
 /* ── Initialize a TabWorker to a clean state ────────────────────────── */
 void worker_init(TabWorker *w) {
@@ -95,8 +96,8 @@ void *worker_entry(void *arg) {
                 continue;
             }
 
-            /* Record command in shared history */
-            shm_history_add(shared, buf);
+            /* Record command in shared history and disk */
+            history_store_append(shared, buf, NULL);
 
             /* 1. Command substitution $(...) and `...` */
             char subst_buf[MAX_CMD_LEN];

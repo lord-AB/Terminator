@@ -27,7 +27,8 @@ static const struct {
     { HOTKEY_ACTION_CLEAR_SCREEN,      "clear_screen",     XK_l,         ControlMask },
     { HOTKEY_ACTION_EXIT_OR_EOF,       "exit_or_eof",      XK_d,         ControlMask },
     { HOTKEY_ACTION_COPY,              "copy",             XK_c,         ControlMask | ShiftMask },
-    { HOTKEY_ACTION_PASTE,             "paste",            XK_v,         ControlMask | ShiftMask }
+    { HOTKEY_ACTION_PASTE,             "paste",            XK_v,         ControlMask | ShiftMask },
+    { HOTKEY_ACTION_SEARCH_HISTORY,    "search_history",   XK_r,         ControlMask }
 };
 
 const char *hotkey_action_name(HotkeyAction action) {

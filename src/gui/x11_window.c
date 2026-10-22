@@ -21,6 +21,8 @@
 #include "gui/tab_bar.h"
 #include "gui/clipboard.h"
 #include "input/line_editor.h"
+#include "features/history_search.h"
+#include "features/history_store.h"
 #include "ipc/protocol.h"
 #include "ipc/worker.h"
 #include "parser/multiline.h"
@@ -483,7 +485,11 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
                 proto_send(fd, GUI_MSG_SIGNAL, &sig, sizeof(sig));
             }
             if (sb) {
-                if (sb->input_len > 0 || sb->in_multiline || !gui->tabs[gui->active_tab].command_running) {
+                if (sb->in_search) {
+                    sb->in_search = 0;
+                    screen_buf_set_prompt(sb, sb->saved_prompt[0] ? sb->saved_prompt : "user@terminator> ");
+                    screen_buf_input_clear(sb);
+                } else if (sb->input_len > 0 || sb->in_multiline || !gui->tabs[gui->active_tab].command_running) {
                     char line[MAX_CMD_LEN + 32];
                     snprintf(line, sizeof(line), "%s%s^C", sb->prompt, sb->input);
                     screen_buf_add_line(sb, line);
@@ -557,6 +563,34 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
         char current_line[MAX_CMD_LEN];
         strncpy(current_line, sb->input, sizeof(current_line) - 1);
         current_line[sizeof(current_line) - 1] = '\0';
+
+        /* If in Ctrl+R reverse history search mode */
+        if (sb->in_search) {
+            screen_buf_input_commit(sb);
+            screen_buf_scroll_reset(sb);
+
+            HistorySearchResult res;
+            history_search_find(gui->shared, current_line, &res);
+
+            char out_buf[4096];
+            history_search_format(&res, out_buf, sizeof(out_buf));
+
+            char *line_ptr = out_buf;
+            while (*line_ptr) {
+                char *nl = strchr(line_ptr, '\n');
+                if (nl) *nl = '\0';
+                if (*line_ptr != '\0') {
+                    screen_buf_add_line(sb, line_ptr);
+                }
+                if (!nl) break;
+                line_ptr = nl + 1;
+            }
+
+            sb->in_search = 0;
+            screen_buf_set_prompt(sb, sb->saved_prompt[0] ? sb->saved_prompt : "user@terminator> ");
+            screen_buf_input_clear(sb);
+            break;
+        }
 
         /* Visually commit the line to scrollback */
         screen_buf_input_commit(sb);

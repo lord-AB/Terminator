@@ -14,6 +14,7 @@
 #include "common.h"
 #include "gui/x11_window.h"
 #include "ipc/shm_sync.h"
+#include "features/history_store.h"
 #include "verification.h"
 
 /* ── Parse CLI arguments ────────────────────────────────────────────── */
@@ -50,6 +51,9 @@ static int run_gui(ExecMode mode) {
         return 1;
     }
 
+    /* Load persistent history from ~/.terminator_history */
+    history_store_load(shared, NULL);
+
     GuiState gui;
     if (gui_init(&gui, mode, shared) != 0) {
         TERM_LOG("Could not open X11 display. (Ensure DISPLAY is set, e.g. via XQuartz on macOS)");
@@ -62,6 +66,7 @@ static int run_gui(ExecMode mode) {
     if (gui_open_tab(&gui) < 0) {
         TERM_LOG("main: failed to open initial tab");
         gui_cleanup(&gui);
+        history_store_save(shared, NULL);
         shm_destroy(shared, mode);
         return 1;
     }
@@ -71,6 +76,7 @@ static int run_gui(ExecMode mode) {
 
     /* Cleanup */
     gui_cleanup(&gui);
+    history_store_save(shared, NULL);
     shm_destroy(shared, mode);
     return 0;
 }

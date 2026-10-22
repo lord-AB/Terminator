@@ -7,3 +7,4 @@ terminator
 test_gui_buffer.dSYM/
 
 .vscode/
+.terminator_history

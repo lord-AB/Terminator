@@ -183,6 +183,16 @@ int line_editor_handle_action(GuiState *gui, ScreenBuf *sb, HotkeyAction action)
         }
         return 1;
 
+    case HOTKEY_ACTION_SEARCH_HISTORY:
+        if (sb) {
+            sb->in_search = 1;
+            strncpy(sb->saved_prompt, sb->prompt, sizeof(sb->saved_prompt) - 1);
+            sb->saved_prompt[sizeof(sb->saved_prompt) - 1] = '\0';
+            screen_buf_set_prompt(sb, "Enter search term: ");
+            screen_buf_input_clear(sb);
+        }
+        return 1;
+
     default:
         break;
     }

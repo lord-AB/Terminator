@@ -14,6 +14,8 @@
 #include "ipc/worker.h"
 #include "input/hotkey_cfg.h"
 #include "input/line_editor.h"
+#include "features/history_store.h"
+#include "features/history_search.h"
 #include "gui/screen_buf.h"
 #include <assert.h>
 
@@ -622,7 +624,73 @@ int run_verification_test(ExecMode mode) {
         }
     }
 
-    /* 14. Verify shared history */
+    /* 14. Stage 9: Searchable History & LCS Verification */
+    printf("\n--- Stage 9: Searchable History & LCS Verification ---\n");
+
+    /* 14a. Add transcript commands in Tab 0 */
+    send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "gcc -o myprog myprog.c", jbuf, sizeof(jbuf), &jtype);
+    send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "./myprog < in.txt", jbuf, sizeof(jbuf), &jtype);
+
+    /* 14b. Run 'history' built-in in Tab 1 to verify cross-tab shared history */
+    char h_buf[4096] = {0};
+    if (send_and_collect(tabs[1].gui_write_fd, tabs[1].gui_read_fd, "history", h_buf, sizeof(h_buf), &jtype) == 0) {
+        if (strstr(h_buf, "gcc -o myprog myprog.c") != NULL && strstr(h_buf, "./myprog < in.txt") != NULL) {
+            printf("[PASS] 'history' built-in in Tab 1 saw commands executed in Tab 0\n");
+        } else {
+            printf("[FAIL] Cross-tab history output missing expected commands: %s\n", h_buf);
+            return 1;
+        }
+    } else {
+        printf("[FAIL] Failed to run 'history' in Tab 1\n");
+        return 1;
+    }
+
+    /* 14c. Ctrl+R Longest Common Substring (LCS) Search: "myprog" */
+    HistorySearchResult s_res;
+    int s_count = history_search_find(shared, "myprog", &s_res);
+    char s_out[1024];
+    history_search_format(&s_res, s_out, sizeof(s_out));
+    printf("Ctrl+R Search 'myprog':\n%s", s_out);
+    if (s_count >= 2 && strstr(s_out, "./myprog < in.txt") != NULL && strstr(s_out, "gcc -o myprog myprog.c") != NULL) {
+        printf("[PASS] Ctrl+R search for 'myprog' found max LCS matches in most recent order\n");
+    } else {
+        printf("[FAIL] Ctrl+R search for 'myprog' output mismatch: %s\n", s_out);
+        return 1;
+    }
+
+    /* 14d. Ctrl+R Search: no match case (LCS <= 2) */
+    s_count = history_search_find(shared, "QQQQQ", &s_res);
+    history_search_format(&s_res, s_out, sizeof(s_out));
+    printf("Ctrl+R Search 'QQQQQ':\n%s", s_out);
+    if (s_count == 0 && strcmp(s_out, "No match for search term in history\n") == 0) {
+        printf("[PASS] Ctrl+R search with no match reported 'No match for search term in history'\n");
+    } else {
+        printf("[FAIL] Ctrl+R search with no match output mismatch: %s\n", s_out);
+        return 1;
+    }
+
+    /* 14e. History Persistence Test (save & load) */
+    const char *v_hist_file = "/tmp/v_terminator_hist.txt";
+    unlink(v_hist_file);
+    if (history_store_save(shared, v_hist_file) == 0) {
+        SharedState *v_shm = shm_create(MODE_THREAD);
+        int v_loaded = history_store_load(v_shm, v_hist_file);
+        if (v_loaded > 0 && v_loaded == shm_history_count(shared)) {
+            printf("[PASS] History store persistence (save & load %d commands) verified\n", v_loaded);
+        } else {
+            printf("[FAIL] History persistence count mismatch: loaded %d vs shared %d\n", v_loaded, shm_history_count(shared));
+            shm_destroy(v_shm, MODE_THREAD);
+            unlink(v_hist_file);
+            return 1;
+        }
+        shm_destroy(v_shm, MODE_THREAD);
+        unlink(v_hist_file);
+    } else {
+        printf("[FAIL] Failed to save history to file\n");
+        return 1;
+    }
+
+    /* 15. Verify shared history count */
     printf("\n--- History verification ---\n");
     int hist_count = shm_history_count(shared);
     printf("Total commands in history: %d\n", hist_count);
@@ -636,7 +704,7 @@ int run_verification_test(ExecMode mode) {
         printf("[FAIL] History count too low: %d\n", hist_count);
     }
 
-    /* 15. Test exit built-in in Tab 0 */
+    /* 16. Test exit built-in in Tab 0 */
     printf("\n--- Testing 'exit' built-in ---\n");
     if (send_and_collect(tabs[0].gui_write_fd, tabs[0].gui_read_fd, "exit", resp, sizeof(resp), &type) == 0) {
         if (type == TAB_MSG_EXIT) {
@@ -647,12 +715,12 @@ int run_verification_test(ExecMode mode) {
     worker_stop(&tabs[1]);
     printf("[PASS] All workers stopped cleanly\n");
 
-    /* 16. Clean up */
+    /* 17. Clean up */
     shm_destroy(shared, mode);
     printf("[PASS] Shared memory destroyed\n");
 
     printf("\n========================================\n");
-    printf("  Stage 8 Verification Complete!\n");
+    printf("  Stage 9 Verification Complete!\n");
     printf("========================================\n\n");
     return 0;
 }
