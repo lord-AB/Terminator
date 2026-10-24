@@ -66,7 +66,7 @@ TEST_LCS_BIN = $(BUILDDIR)/test_lcs
 TEST_AUTOCOMPLETE_BIN = $(BUILDDIR)/test_autocomplete
 TEST_SCRIPT_BIN = $(BUILDDIR)/test_script
 
-EXEC_COMMON_OBJS = $(BUILDDIR)/parser/ast.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/exec/jobs.o $(BUILDDIR)/exec/pipeline.o $(BUILDDIR)/exec/redirect.o $(BUILDDIR)/ipc/protocol.o
+EXEC_COMMON_OBJS = $(BUILDDIR)/parser/ast.o $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/parser/expand.o $(BUILDDIR)/parser/subst.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/exec/jobs.o $(BUILDDIR)/exec/pipeline.o $(BUILDDIR)/exec/redirect.o $(BUILDDIR)/ipc/protocol.o
 SCRIPT_OBJS = $(BUILDDIR)/script/script_validator.o $(BUILDDIR)/script/test_eval.o $(BUILDDIR)/script/interpreter.o
 
 test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPELINE_BIN) $(TEST_MULTIWATCH_BIN) $(TEST_HOTKEYS_BIN) $(TEST_JOBS_BIN) $(TEST_LCS_BIN) $(TEST_AUTOCOMPLETE_BIN) $(TEST_SCRIPT_BIN)
@@ -100,19 +100,19 @@ $(TEST_BIN): tests/test_gui_buffer.c $(BUILDDIR)/gui/screen_buf.o $(BUILDDIR)/gu
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_PARSER_BIN): tests/test_parser.c $(BUILDDIR)/parser/multiline.o $(BUILDDIR)/parser/expand.o $(BUILDDIR)/parser/subst.o $(BUILDDIR)/parser/lexer.o $(EXEC_COMMON_OBJS)
+$(TEST_PARSER_BIN): tests/test_parser.c $(BUILDDIR)/parser/multiline.o $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_REDIRECT_BIN): tests/test_redirect.c $(BUILDDIR)/parser/lexer.o $(EXEC_COMMON_OBJS)
+$(TEST_REDIRECT_BIN): tests/test_redirect.c $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_PIPELINE_BIN): tests/test_pipeline.c $(BUILDDIR)/parser/lexer.o $(EXEC_COMMON_OBJS)
+$(TEST_PIPELINE_BIN): tests/test_pipeline.c $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_MULTIWATCH_BIN): tests/test_multiwatch.c $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/parser/lexer.o $(EXEC_COMMON_OBJS)
+$(TEST_MULTIWATCH_BIN): tests/test_multiwatch.c $(BUILDDIR)/features/multiwatch.o $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -120,7 +120,7 @@ $(TEST_HOTKEYS_BIN): tests/test_hotkeys.c $(BUILDDIR)/input/hotkey_cfg.o $(BUILD
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_JOBS_BIN): tests/test_jobs.c $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/builtins.o $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/ipc/shm_sync.o $(BUILDDIR)/parser/expand.o $(BUILDDIR)/parser/subst.o $(SCRIPT_OBJS) $(EXEC_COMMON_OBJS)
+$(TEST_JOBS_BIN): tests/test_jobs.c $(BUILDDIR)/exec/builtins.o $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/ipc/shm_sync.o $(SCRIPT_OBJS) $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -132,7 +132,7 @@ $(TEST_AUTOCOMPLETE_BIN): tests/test_autocomplete.c $(BUILDDIR)/input/autocomple
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(TEST_SCRIPT_BIN): tests/test_script.c $(BUILDDIR)/script/script_validator.o $(BUILDDIR)/script/test_eval.o $(BUILDDIR)/script/interpreter.o $(BUILDDIR)/parser/expand.o $(BUILDDIR)/parser/subst.o $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/exec/builtins.o $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/ipc/shm_sync.o $(EXEC_COMMON_OBJS)
+$(TEST_SCRIPT_BIN): tests/test_script.c $(SCRIPT_OBJS) $(BUILDDIR)/exec/builtins.o $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/ipc/shm_sync.o $(EXEC_COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 

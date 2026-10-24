@@ -2,6 +2,7 @@
  * multiwatch.c — Implementation of multiWatch parallel command execution
  */
 #include "features/multiwatch.h"
+#include "exec/pipeline.h"
 #include "ipc/protocol.h"
 
 #include <stdio.h>
@@ -116,7 +117,7 @@ int multiwatch_parse_args(int argc, char *argv[], char *cmds[], int max_cmds) {
     return count;
 }
 
-static int spawn_child(ShellContext *ctx, MultiwatchCommand *mc) {
+static int spawn_command(ShellContext *ctx, MultiwatchCommand *mc) {
     int pfd[2];
     if (pipe(pfd) < 0) {
         return -1;
@@ -146,7 +147,8 @@ static int spawn_child(ShellContext *ctx, MultiwatchCommand *mc) {
             }
         }
 
-        execl("/bin/sh", "sh", "-c", mc->cmd, (char *)NULL);
+        /* Execute command natively via Terminator's pipeline engine without /bin/sh */
+        pipeline_exec_string_raw(ctx, mc->cmd);
         _exit(127);
     }
 
@@ -191,7 +193,7 @@ int multiwatch_run(ShellContext *ctx, int num_cmds, char *cmds[], int out_fd, in
         cmds_state[i].running = 0;
         cmds_state[i].last_finish_time = 0;
 
-        spawn_child(ctx, &cmds_state[i]);
+        spawn_command(ctx, &cmds_state[i]);
     }
 
     int interrupted = 0;
@@ -295,7 +297,7 @@ int multiwatch_run(ShellContext *ctx, int num_cmds, char *cmds[], int out_fd, in
         time_t now = time(NULL);
         for (int i = 0; i < total_cmds; i++) {
             if (!cmds_state[i].running && (now - cmds_state[i].last_finish_time >= MULTIWATCH_INTERVAL_SEC)) {
-                spawn_child(ctx, &cmds_state[i]);
+                spawn_command(ctx, &cmds_state[i]);
             }
         }
     }

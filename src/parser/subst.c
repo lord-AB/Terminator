@@ -2,6 +2,7 @@
  * subst.c — Command substitution with innermost-first evaluation
  */
 #include "parser/subst.h"
+#include "exec/pipeline.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -104,10 +105,11 @@ static int find_innermost(const char *str, size_t *sub_start, size_t *cmd_start,
 }
 
 /*
- * Runs `cmd` in a child process, capturing stdout via pipe.
+ * Runs `cmd` in a child process using Terminator's native pipeline engine,
+ * capturing stdout via pipe and redirecting stderr to /dev/null.
  * Strips trailing newlines from captured output.
  */
-static int run_subcommand(ShellContext *ctx, const char *cmd, char *out_buf, size_t out_max) {
+static int subst_run_cmd(ShellContext *ctx, const char *cmd, char *out_buf, size_t out_max) {
     int pfd[2];
     if (pipe(pfd) < 0) {
         return -1;
@@ -134,10 +136,13 @@ static int run_subcommand(ShellContext *ctx, const char *cmd, char *out_buf, siz
         }
 
         if (ctx && ctx->cwd[0] != '\0') {
-            chdir(ctx->cwd);
+            if (chdir(ctx->cwd) < 0) {
+                /* proceed */
+            }
         }
 
-        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        /* Execute inner command natively without invoking /bin/sh or external shell */
+        pipeline_exec_string_raw(ctx, cmd);
         _exit(127);
     }
 
@@ -189,7 +194,7 @@ int subst_expand(ShellContext *ctx, const char *input, char *output, size_t out_
         /* Execute command and capture output */
         char sub_result[MAX_CMD_LEN];
         sub_result[0] = '\0';
-        run_subcommand(ctx, cmd, sub_result, sizeof(sub_result));
+        subst_run_cmd(ctx, cmd, sub_result, sizeof(sub_result));
 
         /* Splice result into current string: prefix + sub_result + suffix */
         char next[MAX_CMD_LEN];

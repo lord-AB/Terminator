@@ -55,4 +55,18 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd);
 int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int num_pids,
                              const char *cmd_str, int capture_fd, int out_fd, int in_fd);
 
+/*
+ * Executes a pipeline directly to current STDOUT/STDERR without IPC framing.
+ * If N == 1, replaces current process image via execvp().
+ * If N > 1, forks pipeline stages and exits with status of last command.
+ */
+int pipeline_exec_pipeline_raw(ShellContext *ctx, Pipeline *pl);
+
+/*
+ * Parses and executes a command string directly to current STDOUT/STDERR.
+ * Performs substitution, variable expansion, lexing, AST parsing, globbing,
+ * redirections, and executes the pipeline without calling /bin/sh.
+ */
+int pipeline_exec_string_raw(ShellContext *ctx, const char *cmd_line);
+
 #endif /* EXEC_PIPELINE_H */

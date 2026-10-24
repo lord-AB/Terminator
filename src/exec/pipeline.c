@@ -5,6 +5,9 @@
 #include "exec/redirect.h"
 #include "exec/jobs.h"
 #include "ipc/protocol.h"
+#include "parser/subst.h"
+#include "parser/expand.h"
+#include "parser/lexer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -464,4 +467,164 @@ int pipeline_exec_single(ShellContext *ctx, char *argv[], int out_fd) {
     }
     cmd.argv[cmd.argc] = NULL;
     return pipeline_exec_cmd(ctx, &cmd, out_fd);
+}
+
+int pipeline_exec_pipeline_raw(ShellContext *ctx, Pipeline *pl) {
+    if (!pl || pl->num_commands <= 0) {
+        _exit(0);
+    }
+
+    int N = pl->num_commands;
+
+    if (N == 1) {
+        Command *cmd = &pl->commands[0];
+
+        /* Apply explicit redirections (< infile, > outfile, >> outfile) */
+        if (redirect_apply(ctx, cmd) < 0) {
+            _exit(1);
+        }
+
+        if (cmd->argc == 0 || !cmd->argv[0]) {
+            _exit(0);
+        }
+
+        /* Expand wildcards (*, ?, [) in child */
+        expand_globs(cmd);
+
+        /* Execute command natively via execvp */
+        execvp(cmd->argv[0], cmd->argv);
+
+        if (errno == ENOENT) {
+            fprintf(stderr, "terminator: %s: command not found\n", cmd->argv[0]);
+        } else {
+            fprintf(stderr, "terminator: %s: %s\n", cmd->argv[0], strerror(errno));
+        }
+        fflush(stderr);
+        _exit(127);
+    }
+
+    /* N > 1: Pipeline orchestration without IPC framing */
+    int pipes[MAX_COMMANDS_IN_PIPELINE][2];
+    for (int i = 0; i < N - 1; i++) {
+        if (pipe(pipes[i]) < 0) {
+            fprintf(stderr, "terminator: pipe failed: %s\n", strerror(errno));
+            fflush(stderr);
+            _exit(1);
+        }
+    }
+
+    pid_t pids[MAX_COMMANDS_IN_PIPELINE];
+    for (int i = 0; i < N; i++) {
+        pids[i] = fork();
+        if (pids[i] < 0) {
+            fprintf(stderr, "terminator: fork failed: %s\n", strerror(errno));
+            fflush(stderr);
+            _exit(1);
+        }
+
+        if (pids[i] == 0) {
+            /* Child process i */
+            /* Stdin from previous pipe */
+            if (i > 0) {
+                dup2(pipes[i - 1][0], STDIN_FILENO);
+            }
+            /* Stdout to next pipe */
+            if (i < N - 1) {
+                dup2(pipes[i][1], STDOUT_FILENO);
+            }
+            /* If i == N - 1, stdout is unchanged (already routed to destination pipe) */
+
+            /* Close all intermediate pipes in child */
+            for (int j = 0; j < N - 1; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+
+            if (redirect_apply(ctx, &pl->commands[i]) < 0) {
+                _exit(1);
+            }
+
+            expand_globs(&pl->commands[i]);
+
+            if (pl->commands[i].argc == 0 || !pl->commands[i].argv[0]) {
+                _exit(0);
+            }
+
+            execvp(pl->commands[i].argv[0], pl->commands[i].argv);
+            if (errno == ENOENT) {
+                fprintf(stderr, "terminator: %s: command not found\n", pl->commands[i].argv[0]);
+            } else {
+                fprintf(stderr, "terminator: %s: %s\n", pl->commands[i].argv[0], strerror(errno));
+            }
+            fflush(stderr);
+            _exit(127);
+        }
+    }
+
+    /* Parent process: close all intermediate pipe ends */
+    for (int j = 0; j < N - 1; j++) {
+        close(pipes[j][0]);
+        close(pipes[j][1]);
+    }
+
+    /* Wait for all pipeline children */
+    int last_status = 0;
+    for (int i = 0; i < N; i++) {
+        int status = 0;
+        waitpid(pids[i], &status, 0);
+        if (i == N - 1) {
+            if (WIFEXITED(status)) last_status = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status)) last_status = 128 + WTERMSIG(status);
+        }
+    }
+    _exit(last_status);
+}
+
+int pipeline_exec_string_raw(ShellContext *ctx, const char *cmd_line) {
+    if (!cmd_line || cmd_line[0] == '\0') {
+        _exit(0);
+    }
+
+    /* 1. Command substitution $(...) and `...` */
+    char subst_buf[MAX_CMD_LEN];
+    if (subst_expand(ctx, cmd_line, subst_buf, sizeof(subst_buf)) < 0) {
+        fprintf(stderr, "terminator: substitution error\n");
+        fflush(stderr);
+        _exit(1);
+    }
+
+    /* 2. Variable expansion ($VAR, $?, $1..$#) and line continuation (\\\n) */
+    char expanded[MAX_CMD_LEN];
+    if (expand_variables(ctx, subst_buf, expanded, sizeof(expanded)) < 0) {
+        fprintf(stderr, "terminator: expansion error\n");
+        fflush(stderr);
+        _exit(1);
+    }
+
+    /* 3. Tokenize with quote awareness */
+    char *tokens[MAX_ARGS];
+    int num_tokens = lexer_tokenize(expanded, tokens, MAX_ARGS);
+    if (num_tokens <= 0) {
+        _exit(0);
+    }
+
+    /* 4. Parse AST (redirections, pipeline segments) */
+    Pipeline pl;
+    if (ast_parse(tokens, num_tokens, &pl) < 0) {
+        fprintf(stderr, "terminator: syntax error near unexpected token\n");
+        fflush(stderr);
+        lexer_free_tokens(tokens, num_tokens);
+        _exit(2);
+    }
+    lexer_free_tokens(tokens, num_tokens);
+
+    if (pl.num_commands == 0) {
+        pipeline_free(&pl);
+        _exit(0);
+    }
+
+    /* 5. Execute raw pipeline */
+    int status = pipeline_exec_pipeline_raw(ctx, &pl);
+    pipeline_free(&pl);
+    _exit(status);
 }
