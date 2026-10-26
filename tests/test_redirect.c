@@ -162,8 +162,15 @@ int main(void) {
                 "}\n");
     fclose(fp);
 
-    /* Compile redir_helper */
-    system("gcc -o /tmp/redir_helper /tmp/redir_helper.c");
+    /* Compile redir_helper without invoking system() or a shell */
+    pid_t comp_pid = fork();
+    if (comp_pid == 0) {
+        char *gcc_argv[] = {"gcc", "-o", "/tmp/redir_helper", "/tmp/redir_helper.c", NULL};
+        execvp("gcc", gcc_argv);
+        _exit(1);
+    }
+    int comp_status = 0;
+    waitpid(comp_pid, &comp_status, 0);
 
     /* Create input file */
     fp = fopen("/tmp/test_combo_in.txt", "w");

@@ -196,7 +196,7 @@ int interpreter_exec_line(ShellContext *ctx, const char *line, int out_fd) {
         const char *first_cmd = pl.commands[0].argv[0];
         if (builtins_is_builtin(first_cmd)) {
             status = builtins_exec_cmd(ctx, &pl.commands[0], out_fd, NULL);
-        } else if (strcmp(first_cmd, "bash") == 0 && pl.commands[0].argc >= 2) {
+        } else if ((strcmp(first_cmd, "bash") == 0 || strcmp(first_cmd, "sh") == 0) && pl.commands[0].argc >= 2) {
             status = interpreter_run_file(ctx, pl.commands[0].argv[1],
                                           pl.commands[0].argc - 1,
                                           &pl.commands[0].argv[1], 0, out_fd);

@@ -154,7 +154,8 @@ void *worker_entry(void *arg) {
                     break;
                 }
             } else if (pl.num_commands == 1 && pl.commands[0].argc > 0 &&
-                       strcmp(pl.commands[0].argv[0], "bash") == 0 && pl.commands[0].argc >= 2) {
+                       (strcmp(pl.commands[0].argv[0], "bash") == 0 || strcmp(pl.commands[0].argv[0], "sh") == 0) &&
+                       pl.commands[0].argc >= 2) {
                 interpreter_run_file(ctx, pl.commands[0].argv[1],
                                      pl.commands[0].argc - 1,
                                      &pl.commands[0].argv[1], 0, write_fd);
