@@ -123,12 +123,12 @@ static void test_output_formatting_and_execution(void) {
 
     /* Verify output format:
      * 1. Contains "echo HELLO_MW"
-     * 2. Contains 51 hyphens divider: ---------------------------------------------------
+     * 2. Contains 52 hyphens divider: ----------------------------------------------------
      * 3. Contains HELLO_MW
      * 4. Contains ^C
      */
     assert(strstr(full_output, "\"echo HELLO_MW\",") != NULL);
-    assert(strstr(full_output, "---------------------------------------------------") != NULL);
+    assert(strstr(full_output, "----------------------------------------------------") != NULL);
     assert(strstr(full_output, "HELLO_MW") != NULL);
     assert(strstr(full_output, "WORLD_MW") != NULL);
     assert(strstr(full_output, "^C") != NULL);

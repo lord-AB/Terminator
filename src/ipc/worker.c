@@ -60,6 +60,7 @@ void *worker_entry(void *arg) {
     }
     ctx->in_fd = read_fd;
     ctx->out_fd = write_fd;
+    ctx->shared = shared;
 
     /* Send READY and initial CWD to GUI */
     proto_send(write_fd, TAB_MSG_READY, NULL, 0);

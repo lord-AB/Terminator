@@ -450,7 +450,7 @@ int run_verification_test(ExecMode mode) {
     printf("[PASS] multiWatch received output:\n%s", mw_output);
     if (strstr(mw_output, "\"date +%T\",") != NULL &&
         strstr(mw_output, "\"ls | wc -l\",") != NULL &&
-        strstr(mw_output, "---------------------------------------------------") != NULL &&
+        strstr(mw_output, "----------------------------------------------------") != NULL &&
         strstr(mw_output, "^C") != NULL) {
         printf("[PASS] multiWatch parallel execution, format, and Ctrl+C interrupt verified\n");
     } else {

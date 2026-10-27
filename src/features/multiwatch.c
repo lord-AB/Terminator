@@ -264,12 +264,12 @@ int multiwatch_run(ShellContext *ctx, int num_cmds, char *cmds[], int out_fd, in
 
                         /* Print exact required format:
                          * "cmd", <timestamp>:
-                         * ---------------------------------------------------
+                         * ----------------------------------------------------
                          * <output>
-                         * ---------------------------------------------------
+                         * ----------------------------------------------------
                          */
                         char header[MAX_CMD_LEN + 128];
-                        snprintf(header, sizeof(header), "\"%s\", %ld:\n---------------------------------------------------\n",
+                        snprintf(header, sizeof(header), "\"%s\", %ld:\n----------------------------------------------------\n",
                                  mc->cmd, (long)now);
                         if (out_fd >= 0) {
                             proto_send(out_fd, TAB_MSG_OUTPUT, header, (uint32_t)strlen(header));
@@ -277,7 +277,7 @@ int multiwatch_run(ShellContext *ctx, int num_cmds, char *cmds[], int out_fd, in
                             if (read_buf[n - 1] != '\n') {
                                 proto_send(out_fd, TAB_MSG_OUTPUT, "\n", 1);
                             }
-                            const char div[] = "---------------------------------------------------\n";
+                            const char div[] = "----------------------------------------------------\n";
                             proto_send(out_fd, TAB_MSG_OUTPUT, div, (uint32_t)strlen(div));
                         }
                     } else if (n == 0 || (pfds[k].revents & (POLLHUP | POLLERR))) {

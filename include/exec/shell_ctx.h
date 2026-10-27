@@ -19,16 +19,18 @@ typedef struct {
 } ShellVar;
 
 struct JobTable;
+struct SharedState;
 
 typedef struct ShellContext {
-    int              tab_id;
-    int              in_fd;                 /* tab input pipe from GUI */
-    int              out_fd;                /* tab output pipe to GUI */
-    char             cwd[MAX_PATH_LEN];     /* virtual working directory */
-    int              last_status;           /* exit status of last command ($?) */
-    ShellVar         vars[MAX_VARS];
-    int              num_vars;
-    struct JobTable *jobs;                  /* Per-tab job control table */
+    int                 tab_id;
+    int                 in_fd;                 /* tab input pipe from GUI */
+    int                 out_fd;                /* tab output pipe to GUI */
+    char                cwd[MAX_PATH_LEN];     /* virtual working directory */
+    int                 last_status;           /* exit status of last command ($?) */
+    ShellVar            vars[MAX_VARS];
+    int                 num_vars;
+    struct JobTable    *jobs;                  /* Per-tab job control table */
+    struct SharedState *shared;                /* Global shared memory state */
 } ShellContext;
 
 /*

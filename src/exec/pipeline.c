@@ -4,6 +4,8 @@
 #include "exec/pipeline.h"
 #include "exec/redirect.h"
 #include "exec/jobs.h"
+#include "exec/builtins.h"
+#include "script/interpreter.h"
 #include "ipc/protocol.h"
 #include "parser/subst.h"
 #include "parser/expand.h"
@@ -408,7 +410,25 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
             /* 7. Expand wildcards in child after chdir */
             expand_globs(&pl->commands[i]);
 
-            /* 8. Execute command */
+            /* 8. Execute command (internal scripts & built-ins or external binaries) */
+            if (pl->commands[i].argc > 0 && pl->commands[i].argv[0]) {
+                const char *cmd_name = pl->commands[i].argv[0];
+                if ((strcmp(cmd_name, "bash") == 0 || strcmp(cmd_name, "sh") == 0) && pl->commands[i].argc >= 2) {
+                    int res = interpreter_run_file(ctx, pl->commands[i].argv[1],
+                                                   pl->commands[i].argc - 1,
+                                                   &pl->commands[i].argv[1], 0, STDOUT_FILENO);
+                    _exit(res);
+                } else if (interpreter_is_script(ctx, cmd_name)) {
+                    int res = interpreter_run_file(ctx, cmd_name,
+                                                   pl->commands[i].argc,
+                                                   pl->commands[i].argv, 0, STDOUT_FILENO);
+                    _exit(res);
+                } else if (builtins_is_builtin(cmd_name)) {
+                    int res = builtins_exec(ctx, pl->commands[i].argc, pl->commands[i].argv, STDOUT_FILENO, ctx->shared);
+                    _exit(res == BUILTIN_SUCCESS ? 0 : 1);
+                }
+            }
+
             execvp(pl->commands[i].argv[0], pl->commands[i].argv);
 
             /* If execvp fails */

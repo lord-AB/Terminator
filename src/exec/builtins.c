@@ -16,10 +16,15 @@
 #include <sys/stat.h>
 #include <errno.h>
 
-/* Helper to send text output to the GUI via pipe */
+/* Helper to send text output to the GUI via pipe or raw text to stdout/stderr */
 static void send_output(int out_fd, const char *msg) {
     if (out_fd >= 0 && msg) {
-        proto_send(out_fd, TAB_MSG_OUTPUT, msg, (uint32_t)strlen(msg));
+        if (out_fd == STDOUT_FILENO || out_fd == STDERR_FILENO) {
+            ssize_t w = write(out_fd, msg, strlen(msg));
+            (void)w;
+        } else {
+            proto_send(out_fd, TAB_MSG_OUTPUT, msg, (uint32_t)strlen(msg));
+        }
     }
 }
 

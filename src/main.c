@@ -25,7 +25,7 @@ static ExecMode parse_args(int argc, char *argv[], int *out_test_mode) {
     }
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "useProcess=True") == 0) {
+        if (strcasecmp(argv[i], "useProcess=True") == 0) {
             mode = MODE_PROCESS;
         } else if (strcmp(argv[i], "--test") == 0) {
             if (out_test_mode) {

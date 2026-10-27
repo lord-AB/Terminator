@@ -20,7 +20,7 @@ typedef struct {
 } HistoryEntry;
 
 /* ── Shared memory layout ───────────────────────────────────────────── */
-typedef struct {
+typedef struct SharedState {
     sem_t           sem;                        /* process-shared semaphore (Linux) */
     pthread_mutex_t lock;                       /* process-shared mutex (fallback/thread mode) */
     int             use_sem;                    /* 1 if using POSIX semaphore */
