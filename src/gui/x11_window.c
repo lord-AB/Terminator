@@ -816,6 +816,15 @@ static void handle_button_press(GuiState *gui, XButtonEvent *ev) {
         }
         /* TAB_ACTION_NONE — click was outside tab bar or on empty space */
     }
+
+    /* Middle or Right click on tab: close clicked tab */
+    if (ev->button == Button2 || ev->button == Button3) {
+        int action = tab_bar_click(&gui->tab_bar, ev->x, ev->y);
+        if (action >= 0 && action < MAX_TABS && gui->tabs[action].in_use) {
+            gui_close_tab(gui, action);
+            gui_redraw(gui);
+        }
+    }
 }
 
 /* ── Dispatch a single X11 event ────────────────────────────────────── */

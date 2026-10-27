@@ -43,7 +43,7 @@ Terminator does not rely on third-party terminal widget toolkits (such as VTE). 
 1. **Connection & Visual Setup:** `gui_init()` opens a connection to the X server (`XOpenDisplay`). It queries the default screen, root window, and creates an unbacked top-level window with `XCreateWindow` selecting input events:
    - `ExposureMask` (window damage and initial draw)
    - `KeyPressMask` / `KeyReleaseMask` (keyboard input)
-   - `ButtonPressMask` / `ButtonReleaseMask` (mouse tab clicks)
+   - `ButtonPressMask` / `ButtonReleaseMask` (mouse tab clicks: Left-click switches tab or creates new tab via `[+]`; Middle-click or Right-click on a tab header closes that tab)
    - `StructureNotifyMask` (resizing and window closing)
 2. **Double-Buffering Architecture:** To prevent visible flicker during fast command outputs and typing, Terminator draws exclusively into an off-screen `Pixmap` back-buffer allocated with `XCreatePixmap`. During `gui_redraw()`, the background, tab headers, scrollback lines, prompt, input text, and cursor block are drawn into the back-buffer, which is then atomically copied to the window using `XCopyArea` followed by `XFlush`.
 3. **Typography & Monospace Grid:** Monospace font metrics (`XLoadQueryFont`) establish standard character cells:

@@ -1,0 +1,41 @@
+# ─────────────────────────────────────────────────────────────────────
+# Terminator Configuration File (~/.terminatorrc)
+# ─────────────────────────────────────────────────────────────────────
+# Custom keybinding configuration for Terminator terminal emulator.
+# Any changes take effect immediately on next startup without recompiling.
+# If a keybinding is invalid or conflicts with another action, Terminator
+# will display a warning and fall back to the safe default binding.
+#
+# Syntax:
+#   action_name = Key_Combination
+#
+# Supported Modifiers:
+#   Ctrl, Shift, Alt (Mod1), Cmd (Mod4 / Super)
+#
+# Supported Special Keys:
+#   Left, Right, Up, Down, Home, End, BackSpace, Delete, Enter, Tab, Space, Esc
+# ─────────────────────────────────────────────────────────────────────
+
+# Navigation within command line
+move_left         = Left
+move_right        = Right
+move_home         = Ctrl+A
+move_end          = Ctrl+E
+
+# History navigation
+history_prev      = Up
+history_next      = Down
+search_history    = Ctrl+R
+
+# Line editing & deletion
+delete_to_start   = Ctrl+U
+delete_to_end     = Ctrl+K
+delete_prev_word  = Ctrl+W
+
+# Screen & Session control
+clear_screen      = Ctrl+L
+exit_or_eof       = Ctrl+D
+
+# Clipboard selection copy / paste
+copy              = Ctrl+Shift+C
+paste             = Ctrl+Shift+V

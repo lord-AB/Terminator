@@ -110,9 +110,10 @@ Terminator automatically reads `~/.terminatorrc` on launch. A sample template is
 cp .terminatorrc.sample ~/.terminatorrc
 ```
 
-### Default Keybindings
-- **New Tab:** `Ctrl+T` / `Cmd+T`
-- **Switch Tabs:** `Alt+1` through `Alt+9`
+### Default Keybindings & Mouse Actions
+- **New Tab:** `Ctrl+T` / `Cmd+T` or Left-click on `[ + ]`
+- **Switch Tabs:** `Alt+1` through `Alt+9` or Left-click on tab header
+- **Close Tab:** `Ctrl+D`, `exit`, or Middle-click / Right-click on tab header
 - **Move Cursor:** `Left` / `Right`
 - **Start / End of Line:** `Ctrl+A` / `Ctrl+E`
 - **Delete Line Before / After:** `Ctrl+U` / `Ctrl+K`
@@ -122,6 +123,7 @@ cp .terminatorrc.sample ~/.terminatorrc
 - **Copy Selection:** `Ctrl+Shift+C`
 - **Paste Selection:** `Ctrl+Shift+V`
 - **Interrupt / Suspend:** `Ctrl+C` / `Ctrl+Z`
+- **Scroll Buffer:** `Shift+Up` / `Shift+Down` or Mouse Wheel (Button4/Button5)
 
 ---
 
@@ -139,7 +141,7 @@ cp .terminatorrc.sample ~/.terminatorrc
 terminator/
 ├── Makefile                        # Build system with dependency rules
 ├── README.md                       # Setup, usage, and architecture overview
-├── DESIGN.md                       # Detailed engineering design document
+├── design.md                       # Detailed engineering design document
 ├── .terminatorrc.sample            # Hotkey configuration template
 │
 ├── include/                        # Subsystem headers

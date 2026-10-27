@@ -10,6 +10,7 @@
 #define IPC_SHM_SYNC_H
 
 #include <pthread.h>
+#include <semaphore.h>
 #include "common.h"
 
 /* ── History entry ──────────────────────────────────────────────────── */
@@ -20,7 +21,9 @@ typedef struct {
 
 /* ── Shared memory layout ───────────────────────────────────────────── */
 typedef struct {
-    pthread_mutex_t lock;                       /* process-shared mutex */
+    sem_t           sem;                        /* process-shared semaphore (Linux) */
+    pthread_mutex_t lock;                       /* process-shared mutex (fallback/thread mode) */
+    int             use_sem;                    /* 1 if using POSIX semaphore */
     int             count;                      /* total commands added */
     int             head;                       /* next write index (ring) */
     HistoryEntry    entries[HISTORY_CAPACITY];   /* ring buffer         */
