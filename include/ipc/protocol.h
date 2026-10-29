@@ -76,6 +76,13 @@ int proto_read_all(int fd, void *buf, size_t n);
 int proto_send(int fd, uint32_t type, const void *payload, uint32_t payload_len);
 
 /*
+ * Stream text output to a file descriptor:
+ * - If out_fd is STDOUT_FILENO or STDERR_FILENO, writes raw bytes.
+ * - Otherwise wraps into TAB_MSG_OUTPUT pipe packet via proto_send().
+ */
+void proto_send_text(int out_fd, const char *msg);
+
+/*
  * Receive a message from a pipe.
  * Reads the header first, then the payload into `buf` (up to `buf_size`).
  * Sets *out_type and *out_len on success.

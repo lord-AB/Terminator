@@ -77,6 +77,18 @@ int proto_send(int fd, uint32_t type, const void *payload, uint32_t payload_len)
     return TERM_OK;
 }
 
+/* ── Stream text output to file descriptor or pipe ──────────────────── */
+void proto_send_text(int out_fd, const char *msg) {
+    if (out_fd >= 0 && msg) {
+        if (out_fd == STDOUT_FILENO || out_fd == STDERR_FILENO) {
+            ssize_t w = write(out_fd, msg, strlen(msg));
+            (void)w;
+        } else {
+            proto_send(out_fd, TAB_MSG_OUTPUT, msg, (uint32_t)strlen(msg));
+        }
+    }
+}
+
 /* ── Receive a message from a pipe ──────────────────────────────────── */
 int proto_recv(int fd, uint32_t *out_type, void *buf, size_t buf_size, uint32_t *out_len) {
     PacketHeader hdr;

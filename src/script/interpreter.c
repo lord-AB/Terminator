@@ -10,6 +10,7 @@
 #include "parser/ast.h"
 #include "exec/builtins.h"
 #include "exec/pipeline.h"
+#include "exec/redirect.h"
 #include "ipc/protocol.h"
 
 #include <stdio.h>
@@ -27,31 +28,6 @@ typedef enum {
     COND_SKIP_TO_FI     /* Branch already completed; skip all elif/else until fi */
 } CondState;
 
-static void send_output(int out_fd, const char *msg) {
-    if (out_fd >= 0 && msg) {
-        if (out_fd == STDOUT_FILENO || out_fd == STDERR_FILENO) {
-            ssize_t w = write(out_fd, msg, strlen(msg));
-            (void)w;
-        } else {
-            proto_send(out_fd, TAB_MSG_OUTPUT, msg, (uint32_t)strlen(msg));
-        }
-    }
-}
-
-static void resolve_path(ShellContext *ctx, const char *raw, char *out, size_t out_size) {
-    if (!raw || out_size == 0) return;
-
-    if (raw[0] == '/' || !ctx || ctx->cwd[0] == '\0') {
-        strncpy(out, raw, out_size - 1);
-        out[out_size - 1] = '\0';
-    } else if (raw[0] == '~' && (raw[1] == '/' || raw[1] == '\0')) {
-        const char *home = getenv("HOME");
-        snprintf(out, out_size, "%s%s", home ? home : "", raw + 1);
-    } else {
-        snprintf(out, out_size, "%s/%s", ctx->cwd, raw);
-    }
-}
-
 int interpreter_is_script(ShellContext *ctx, const char *cmd) {
     if (!cmd || cmd[0] == '\0') return 0;
 
@@ -65,7 +41,7 @@ int interpreter_is_script(ShellContext *ctx, const char *cmd) {
     }
 
     char full_path[MAX_PATH_LEN];
-    resolve_path(ctx, cmd, full_path, sizeof(full_path));
+    redirect_resolve_path(ctx, cmd, full_path, sizeof(full_path));
 
     if (access(full_path, R_OK) != 0) {
         return 0;
@@ -158,7 +134,7 @@ int interpreter_exec_line(ShellContext *ctx, const char *line, int out_fd) {
     char subst_buf[MAX_CMD_LEN];
     if (subst_expand(ctx, line, subst_buf, sizeof(subst_buf)) < 0) {
         const char *err = "terminator: substitution error\n";
-        send_output(out_fd, err);
+        proto_send_text(out_fd, err);
         ctx->last_status = 1;
         return 1;
     }
@@ -167,7 +143,7 @@ int interpreter_exec_line(ShellContext *ctx, const char *line, int out_fd) {
     char expanded_buf[MAX_CMD_LEN];
     if (expand_variables(ctx, subst_buf, expanded_buf, sizeof(expanded_buf)) < 0) {
         const char *err = "terminator: expansion error\n";
-        send_output(out_fd, err);
+        proto_send_text(out_fd, err);
         ctx->last_status = 1;
         return 1;
     }
@@ -181,7 +157,7 @@ int interpreter_exec_line(ShellContext *ctx, const char *line, int out_fd) {
     Pipeline pl;
     if (ast_parse(tokens, num_tokens, &pl) < 0) {
         const char *err = "terminator: syntax error near unexpected token\n";
-        send_output(out_fd, err);
+        proto_send_text(out_fd, err);
         ctx->last_status = 2;
         lexer_free_tokens(tokens, num_tokens);
         return 2;
@@ -225,7 +201,7 @@ int interpreter_run_file(ShellContext *ctx, const char *filepath, int argc, char
     if (!ctx || !filepath) return 127;
 
     char full_path[MAX_PATH_LEN];
-    resolve_path(ctx, filepath, full_path, sizeof(full_path));
+    redirect_resolve_path(ctx, filepath, full_path, sizeof(full_path));
 
     /* 1. Pre-execution syntax validation */
     ScriptValidationResult val_res;
@@ -233,7 +209,7 @@ int interpreter_run_file(ShellContext *ctx, const char *filepath, int argc, char
         char err[512];
         snprintf(err, sizeof(err), "terminator: %s: line %d: %s\n",
                  filepath, val_res.error_line, val_res.error_msg);
-        send_output(out_fd, err);
+        proto_send_text(out_fd, err);
         ctx->last_status = 2;
         return 2;
     }
@@ -242,7 +218,7 @@ int interpreter_run_file(ShellContext *ctx, const char *filepath, int argc, char
     if (!fp) {
         char err[512];
         snprintf(err, sizeof(err), "terminator: %s: No such file or directory\n", filepath);
-        send_output(out_fd, err);
+        proto_send_text(out_fd, err);
         ctx->last_status = 127;
         return 127;
     }

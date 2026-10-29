@@ -16,18 +16,6 @@
 #include <sys/stat.h>
 #include <errno.h>
 
-/* Helper to send text output to the GUI via pipe or raw text to stdout/stderr */
-static void send_output(int out_fd, const char *msg) {
-    if (out_fd >= 0 && msg) {
-        if (out_fd == STDOUT_FILENO || out_fd == STDERR_FILENO) {
-            ssize_t w = write(out_fd, msg, strlen(msg));
-            (void)w;
-        } else {
-            proto_send(out_fd, TAB_MSG_OUTPUT, msg, (uint32_t)strlen(msg));
-        }
-    }
-}
-
 int builtins_is_builtin(const char *cmd) {
     if (!cmd) return 0;
     if (strcmp(cmd, "cd") == 0 ||
@@ -57,7 +45,7 @@ int builtin_cd(ShellContext *ctx, int argc, char *argv[], int out_fd) {
         const char *oldpwd = shell_ctx_get_var(ctx, "OLDPWD");
         if (!oldpwd) {
             char err[] = "terminator: cd: OLDPWD not set\n";
-            send_output(out_fd, err);
+            proto_send_text(out_fd, err);
             ctx->last_status = BUILTIN_ERROR;
             return BUILTIN_ERROR;
         }
@@ -65,7 +53,7 @@ int builtin_cd(ShellContext *ctx, int argc, char *argv[], int out_fd) {
         /* Print directory like bash does when cd - */
         char msg[MAX_PATH_LEN + 2];
         snprintf(msg, sizeof(msg), "%s\n", oldpwd);
-        send_output(out_fd, msg);
+        proto_send_text(out_fd, msg);
     } else if (strncmp(argv[1], "~/", 2) == 0) {
         const char *home = getenv("HOME");
         if (!home) home = "/";
@@ -89,7 +77,7 @@ int builtin_cd(ShellContext *ctx, int argc, char *argv[], int out_fd) {
     if (!realpath(full_path, resolved)) {
         char err[MAX_PATH_LEN + 64];
         snprintf(err, sizeof(err), "terminator: cd: %s: %s\n", argv[1], strerror(errno));
-        send_output(out_fd, err);
+        proto_send_text(out_fd, err);
         ctx->last_status = BUILTIN_ERROR;
         return BUILTIN_ERROR;
     }
@@ -99,7 +87,7 @@ int builtin_cd(ShellContext *ctx, int argc, char *argv[], int out_fd) {
     if (stat(resolved, &st) != 0) {
         char err[MAX_PATH_LEN + 64];
         snprintf(err, sizeof(err), "terminator: cd: %s: %s\n", argv[1], strerror(errno));
-        send_output(out_fd, err);
+        proto_send_text(out_fd, err);
         ctx->last_status = BUILTIN_ERROR;
         return BUILTIN_ERROR;
     }
@@ -107,7 +95,7 @@ int builtin_cd(ShellContext *ctx, int argc, char *argv[], int out_fd) {
     if (!S_ISDIR(st.st_mode)) {
         char err[MAX_PATH_LEN + 64];
         snprintf(err, sizeof(err), "terminator: cd: %s: Not a directory\n", argv[1]);
-        send_output(out_fd, err);
+        proto_send_text(out_fd, err);
         ctx->last_status = BUILTIN_ERROR;
         return BUILTIN_ERROR;
     }
@@ -116,7 +104,7 @@ int builtin_cd(ShellContext *ctx, int argc, char *argv[], int out_fd) {
     if (access(resolved, X_OK) != 0) {
         char err[MAX_PATH_LEN + 64];
         snprintf(err, sizeof(err), "terminator: cd: %s: Permission denied\n", argv[1]);
-        send_output(out_fd, err);
+        proto_send_text(out_fd, err);
         ctx->last_status = BUILTIN_ERROR;
         return BUILTIN_ERROR;
     }
@@ -155,7 +143,7 @@ int builtin_history(ShellContext *ctx, int argc, char *argv[], int out_fd, Share
     (void)argc;
     (void)argv;
     if (!shared) {
-        send_output(out_fd, "history: shared memory not available\n");
+        proto_send_text(out_fd, "history: shared memory not available\n");
         ctx->last_status = BUILTIN_ERROR;
         return BUILTIN_ERROR;
     }
@@ -168,7 +156,7 @@ int builtin_history(ShellContext *ctx, int argc, char *argv[], int out_fd, Share
         if (cmd) {
             char line[MAX_CMD_LEN + 32];
             snprintf(line, sizeof(line), "%5d  %s\n", i + 1, cmd);
-            send_output(out_fd, line);
+            proto_send_text(out_fd, line);
         }
     }
 
@@ -181,7 +169,7 @@ int builtin_multiwatch(ShellContext *ctx, int argc, char *argv[], int out_fd) {
     int count = multiwatch_parse_args(argc, argv, cmds, MULTIWATCH_MAX_CMDS);
     if (count <= 0) {
         char err[] = "terminator: multiWatch: usage: multiWatch [\"cmd1\", \"cmd2\", ...]\n";
-        send_output(out_fd, err);
+        proto_send_text(out_fd, err);
         if (ctx) ctx->last_status = BUILTIN_ERROR;
         return BUILTIN_ERROR;
     }
@@ -230,7 +218,7 @@ int builtin_bg(ShellContext *ctx, int argc, char *argv[], int out_fd) {
 
 int builtin_source(ShellContext *ctx, int argc, char *argv[], int out_fd) {
     if (argc < 2 || !argv[1]) {
-        send_output(out_fd, "terminator: source: filename argument required\n");
+        proto_send_text(out_fd, "terminator: source: filename argument required\n");
         ctx->last_status = 1;
         return 1;
     }
@@ -286,7 +274,7 @@ int builtins_exec_cmd(ShellContext *ctx, Command *cmd, int out_fd, SharedState *
     if (file_fd < 0) {
         char err[MAX_CMD_LEN];
         snprintf(err, sizeof(err), "terminator: %s: %s\n", cmd->outfile, strerror(errno));
-        send_output(out_fd, err);
+        proto_send_text(out_fd, err);
         ctx->last_status = BUILTIN_ERROR;
         return BUILTIN_ERROR;
     }

@@ -2,6 +2,7 @@
  * test_eval.c — POSIX [ ... ] condition evaluator
  */
 #include "script/test_eval.h"
+#include "exec/redirect.h"
 #include "parser/expand.h"
 #include "parser/lexer.h"
 
@@ -11,20 +12,6 @@
 #include <ctype.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-static void resolve_path(ShellContext *ctx, const char *raw_path, char *out_path, size_t out_size) {
-    if (!raw_path || out_size == 0) return;
-
-    if (raw_path[0] == '/' || !ctx || ctx->cwd[0] == '\0') {
-        strncpy(out_path, raw_path, out_size - 1);
-        out_path[out_size - 1] = '\0';
-    } else if (raw_path[0] == '~' && (raw_path[1] == '/' || raw_path[1] == '\0')) {
-        const char *home = getenv("HOME");
-        snprintf(out_path, out_size, "%s%s", home ? home : "", raw_path + 1);
-    } else {
-        snprintf(out_path, out_size, "%s/%s", ctx->cwd, raw_path);
-    }
-}
 
 int test_eval_tokens(ShellContext *ctx, int argc, char *argv[]) {
     if (argc <= 0 || !argv || !argv[0]) {
@@ -74,7 +61,7 @@ int test_eval_tokens(ShellContext *ctx, int argc, char *argv[]) {
 
         /* File existence & type operators */
         char full_path[MAX_PATH_LEN];
-        resolve_path(ctx, arg, full_path, sizeof(full_path));
+        redirect_resolve_path(ctx, arg, full_path, sizeof(full_path));
 
         struct stat st;
         int st_res = stat(full_path, &st);

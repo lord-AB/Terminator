@@ -151,9 +151,7 @@ void jobs_check_status(JobTable *jt, int out_fd) {
                 char marker = j->is_current ? '+' : ' ';
                 char msg[MAX_CMD_LEN + 64];
                 snprintf(msg, sizeof(msg), "[%d]%c  Done                    %s\n", j->job_id, marker, clean_cmd);
-                if (out_fd >= 0) {
-                    proto_send(out_fd, TAB_MSG_OUTPUT, msg, (uint32_t)strlen(msg));
-                }
+                proto_send_text(out_fd, msg);
                 jobs_remove(jt, j->job_id);
                 i--;
             } else if (WIFSTOPPED(status)) {
@@ -179,9 +177,7 @@ int jobs_list(JobTable *jt, int out_fd) {
         } else {
             snprintf(line, sizeof(line), "[%d]%c  Running                 %s &\n", j->job_id, marker, clean_cmd);
         }
-        if (out_fd >= 0) {
-            proto_send(out_fd, TAB_MSG_OUTPUT, line, (uint32_t)strlen(line));
-        }
+        proto_send_text(out_fd, line);
     }
     return 0;
 }
@@ -192,14 +188,14 @@ int jobs_bg(JobTable *jt, int job_id, int out_fd) {
     Job *j = (job_id > 0) ? jobs_find_by_id(jt, job_id) : jobs_find_current(jt);
     if (!j) {
         char err[] = "terminator: bg: no such job\n";
-        if (out_fd >= 0) proto_send(out_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+        proto_send_text(out_fd, err);
         return 1;
     }
 
     if (j->state == JOB_STATE_RUNNING) {
         char err[64];
         snprintf(err, sizeof(err), "terminator: bg: job %d already in background\n", j->job_id);
-        if (out_fd >= 0) proto_send(out_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+        proto_send_text(out_fd, err);
         return 0;
     }
 
@@ -207,7 +203,7 @@ int jobs_bg(JobTable *jt, int job_id, int out_fd) {
     if (kill(-j->pgid, SIGCONT) < 0) {
         char err[128];
         snprintf(err, sizeof(err), "terminator: bg: %s\n", strerror(errno));
-        if (out_fd >= 0) proto_send(out_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+        proto_send_text(out_fd, err);
         return 1;
     }
 
@@ -218,9 +214,7 @@ int jobs_bg(JobTable *jt, int job_id, int out_fd) {
     clean_cmd_name(j->cmd, clean_cmd, sizeof(clean_cmd));
     char msg[MAX_CMD_LEN + 64];
     snprintf(msg, sizeof(msg), "[%d]+ %s &\n", j->job_id, clean_cmd);
-    if (out_fd >= 0) {
-        proto_send(out_fd, TAB_MSG_OUTPUT, msg, (uint32_t)strlen(msg));
-    }
+    proto_send_text(out_fd, msg);
 
     return 0;
 }
@@ -231,7 +225,7 @@ int jobs_fg(ShellContext *ctx, JobTable *jt, int job_id, int out_fd, int in_fd) 
     Job *j = (job_id > 0) ? jobs_find_by_id(jt, job_id) : jobs_find_current(jt);
     if (!j) {
         char err[] = "terminator: fg: no such job\n";
-        if (out_fd >= 0) proto_send(out_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+        proto_send_text(out_fd, err);
         return 1;
     }
 
@@ -240,9 +234,7 @@ int jobs_fg(ShellContext *ctx, JobTable *jt, int job_id, int out_fd, int in_fd) 
     clean_cmd_name(j->cmd, clean_cmd, sizeof(clean_cmd));
     char msg[MAX_CMD_LEN + 64];
     snprintf(msg, sizeof(msg), "%s\n", clean_cmd);
-    if (out_fd >= 0) {
-        proto_send(out_fd, TAB_MSG_OUTPUT, msg, (uint32_t)strlen(msg));
-    }
+    proto_send_text(out_fd, msg);
 
     /* Resume job */
     kill(-j->pgid, SIGCONT);

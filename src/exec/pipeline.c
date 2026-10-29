@@ -22,45 +22,6 @@
 #include <errno.h>
 #include <glob.h>
 
-int pipeline_tokenize(char *line, char *argv[], int max_args) {
-    if (!line || !argv || max_args <= 0) return 0;
-
-    int argc = 0;
-    char *p = line;
-
-    while (*p && argc < max_args - 1) {
-        /* Skip leading whitespace */
-        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
-            p++;
-        }
-        if (!*p) break;
-
-        if (*p == '\'' || *p == '"') {
-            /* Quoted token */
-            char quote = *p++;
-            argv[argc++] = p;
-            while (*p && *p != quote) {
-                p++;
-            }
-            if (*p == quote) {
-                *p++ = '\0';
-            }
-        } else {
-            /* Unquoted token */
-            argv[argc++] = p;
-            while (*p && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
-                p++;
-            }
-            if (*p) {
-                *p++ = '\0';
-            }
-        }
-    }
-
-    argv[argc] = NULL;
-    return argc;
-}
-
 /*
  * Expands wildcards (*, ?, [) in command arguments (invoked inside child after chdir).
  */
@@ -475,18 +436,6 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
 
     /* 4. Foreground execution: wait, stream output, and multiplex signals */
     return pipeline_wait_foreground(ctx, pgid, pids, N, pl->cmd_str, capture_pipe[0], out_fd, ctx->in_fd);
-}
-
-int pipeline_exec_single(ShellContext *ctx, char *argv[], int out_fd) {
-    if (!ctx || !argv || !argv[0]) return 0;
-    Command cmd;
-    command_init(&cmd);
-    while (argv[cmd.argc] && cmd.argc < MAX_ARGS - 1) {
-        cmd.argv[cmd.argc] = argv[cmd.argc];
-        cmd.argc++;
-    }
-    cmd.argv[cmd.argc] = NULL;
-    return pipeline_exec_cmd(ctx, &cmd, out_fd);
 }
 
 int pipeline_exec_pipeline_raw(ShellContext *ctx, Pipeline *pl) {
