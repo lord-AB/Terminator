@@ -1,20 +1,21 @@
 terminator/
-├── Makefile                        # Uses wildcard rules to build subsystem objects into build/
-├── README.md                       # Setup, dependencies, usage instructions
-├── DESIGN.md                       # Detailed architecture and IPC documentation
+├── Makefile                        # Build system with targets: all, clean, test
+├── README.md                       # Setup, dependencies, usage instructions, keybindings
+├── design.md                       # Detailed architecture, IPC specification, and design doc
 ├── .terminatorrc.sample            # Default hotkey configuration template
 │
 ├── include/                        # Public API headers mirrored by subsystem
 │   ├── common.h                    # Global constants, error codes, shared macros
+│   ├── verification.h              # Headless multi-stage integration verification engine
 │   ├── gui/
 │   │   ├── x11_window.h            # Display, Window, GC, and Font lifecycle
 │   │   ├── tab_bar.h               # Tab header rendering and mouse click hit-testing
 │   │   ├── screen_buf.h            # Per-tab text ring-buffer, scrolling, cursor state
 │   │   └── clipboard.h             # X11 Selection (Ctrl+Shift+C / Ctrl+Shift+V)
 │   ├── ipc/
-│   │   ├── protocol.h              # Message packets between GUI and Tabs (KeyEvent, Output, Exit)
+│   │   ├── protocol.h              # Message packets (Output, CWD, Prompt, Signal, Exit) & proto_send_text
 │   │   ├── worker.h                # Unified interface for pthread (Thread mode) & fork (Process mode)
-│   │   └── shm_sync.h              # POSIX shm_open/mmap and process-shared sem_t wrappers
+│   │   └── shm_sync.h              # POSIX anonymous mmap / shared mutex / semaphore wrappers
 │   ├── input/
 │   │   ├── line_editor.h           # Cursor movement, insertion, Ctrl+A/E/U/K/W manipulation
 │   │   ├── hotkey_cfg.h            # ~/.terminatorrc parser and KeySym-to-Action mapper
@@ -22,15 +23,15 @@ terminator/
 │   ├── parser/
 │   │   ├── multiline.h             # Incomplete input detector (trailing \, unclosed '', "", $())
 │   │   ├── lexer.h                 # Tokenizes strings while respecting single/double quote rules
-│   │   ├── expand.h                # $VAR,$?, and positional ($1..$#) variable expansion
+│   │   ├── expand.h                # $VAR, $?, and positional ($1..$#) variable expansion
 │   │   ├── subst.h                 # Innermost-first $(...) and `...` command substitution
 │   │   └── ast.h                   # Pipeline & Command structs (argv, infile, outfile, bg flag)
 │   ├── exec/
 │   │   ├── shell_ctx.h             # Per-tab state (virtual cwd, local env table, last_status $?)
-│   │   ├── pipeline.h              # Spawns N children with N-1 pipes
+│   │   ├── pipeline.h              # Spawns N children with N-1 pipes and in-child globbing
 │   │   ├── redirect.h              # < and > file descriptor setup with open() and dup2()
 │   │   ├── jobs.h                  # Job table, PGID management, fg/bg/jobs, SIGCHLD handler
-│   │   └── builtins.h              # Dispatcher for cd, exit, history, jobs, fg, bg, source
+│   │   └── builtins.h              # Dispatcher for cd, exit, history, multiWatch, jobs, fg, bg, source
 │   ├── features/
 │   │   ├── history_store.h         # Shared memory 10,000-command ring buffer & file persistence
 │   │   ├── history_search.h        # Ctrl+R exact match & Longest Common Substring (DP) algorithm
@@ -41,16 +42,17 @@ terminator/
 │       └── interpreter.h           # Line-by-line state machine for running .sh scripts
 │
 ├── src/                            # Implementation files (1-to-1 match with include/)
-│   ├── main.c                      # CLI parser (useProcess=True), initializes SHM and GUI loop
+│   ├── main.c                      # CLI parser (useProcess=True, --test), SHM and GUI lifecycle
+│   ├── verification.c              # 11-stage automated verification engine for headless mode
 │   ├── gui/
 │   │   ├── x11_window.c            # XOpenDisplay, main poll() loop on X11 FD + Tab pipes
 │   │   ├── tab_bar.c               # Draws [1:~/dir $][2:/tmp][+] and switches active tab
 │   │   ├── screen_buf.c            # Appends command output, handles Ctrl+L and scrollback
 │   │   └── clipboard.c             # Handles SelectionRequest, SelectionNotify, XA_CLIPBOARD
 │   ├── ipc/
-│   │   ├── protocol.c              # Safe read/write packet framing over pipes
+│   │   ├── protocol.c              # Safe read/write packet framing over pipes & proto_send_text
 │   │   ├── worker.c                # Spawns tab via pthread_create() or fork() based on mode
-│   │   └── shm_sync.c              # Creates/destroys shared memory and locks/unlocks semaphores
+│   │   └── shm_sync.c              # Anonymous shared memory, mutex/semaphore sync, ring buffer
 │   ├── input/
 │   │   ├── line_editor.c           # Modifies active input line and returns redraw diffs
 │   │   ├── hotkey_cfg.c            # Parses config file, detects conflicts, falls back to defaults
@@ -76,8 +78,19 @@ terminator/
 │       ├── test_eval.c             # Parses and evaluates POSIX [ ... ] expressions
 │       └── interpreter.c           # Executes script lines, updates $1..$#, handles exit [n]
 │
-└── tests/                          # Standalone unit tests (can run without X11!)
-    ├── test_parser.c               # Tests multiline, quoting, and $(...) expansion
-    ├── test_lcs.c                  # Tests Ctrl+R Longest Common Substring edge cases
-    └── scripts/
-        └── check.sh                # Sample bash script from project specification
+└── tests/                          # Automated unit test suite & verification scripts
+    ├── test_gui_buffer.c           # Screen buffer ring and scrolling tests
+    ├── test_parser.c               # Lexer, quoting, and substitution tests
+    ├── test_redirect.c             # Redirection and missing file checks
+    ├── test_pipeline.c             # Pipeline orchestration and wildcard tests
+    ├── test_multiwatch.c           # MultiWatch concurrency and polling tests
+    ├── test_hotkeys.c              # Hotkey parsing and fallback tests
+    ├── test_jobs.c                 # Process group and signal delivery tests
+    ├── test_lcs.c                  # Longest Common Substring algorithm tests
+    ├── test_autocomplete.c         # File completion, LCP, and menu tests
+    ├── test_script.c               # Script interpreter and validator tests
+    ├── gui_interactive_test.c      # Automated X11 event driver for GUI testing
+    └── scripts/                    # Test scripts for bash interpreter validation
+        ├── check.sh                # Sample compilation check script from project specification
+        ├── demo_conditions.sh      # Nested if/elif/else and condition test script
+        └── demo_pipeline.sh        # Script pipeline and redirection test script

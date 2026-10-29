@@ -69,16 +69,6 @@ In process mode, each terminal tab executes as an independent child process crea
 
 In both modes, user commands are spawned as child processes (`fork() + execvp()`).
 
-### Headless Verification Mode
-To verify all terminal subsystems, job control, IPC, history, and scripting in a headless automated environment:
-```bash
-make test
-```
-Or run the built-in test runner directly:
-```bash
-./terminator --test                  # Tests Thread Mode
-./terminator useProcess=True --test   # Tests Process Mode
-```
 
 ---
 
@@ -127,15 +117,7 @@ cp .terminatorrc.sample ~/.terminatorrc
 
 ---
 
-## 6. Known Limitations
-
-1. **Terminal Control Sequences:** Terminator renders plain text, prompts, and UTF-8 characters via X11 core fonts. Full ANSI escape sequence emulation (such as 256-color escape sequences or curses full-screen TUI apps like `htop` or `vim`) is not implemented; commands outputting line-based text are fully supported.
-2. **Loop Constructs in Scripts:** Bash script interpretation supports control flow conditionals (`if / elif / else / fi`), variable assignments, command substitution, and pipelines. Loops (`for`, `while`) and function definitions are intentionally excluded as per the project specification.
-3. **Multi-screen / Multi-monitor DPI:** High-DPI font scaling depends on the local X11 / XQuartz server configuration.
-
----
-
-## 7. Project Structure
+## 6. Project Structure
 
 ```
 terminator/
@@ -146,6 +128,7 @@ terminator/
 │
 ├── include/                        # Subsystem headers
 │   ├── common.h                    # Constants, types, macros
+│   ├── verification.h              # Headless multi-stage integration verification engine
 │   ├── gui/                        # X11 window, tab bar, screen buffer, clipboard
 │   ├── ipc/                        # Protocol framing, worker threading/forking, SHM sync
 │   ├── input/                      # Line editor, hotkeys, auto-completion
@@ -156,6 +139,7 @@ terminator/
 │
 ├── src/                            # Implementation files mirroring include/
 │   ├── main.c                      # Entry point, CLI flags, initialization
+│   ├── verification.c              # 11-stage automated verification engine for headless mode
 │   ├── gui/                        # X11 rendering and event dispatching
 │   ├── ipc/                        # IPC pipes, worker threads/processes, SHM
 │   ├── input/                      # Terminal input, auto-completion, hotkeys
@@ -175,5 +159,6 @@ terminator/
     ├── test_lcs.c                  # Longest Common Substring algorithm tests
     ├── test_autocomplete.c         # File completion, LCP, and menu tests
     ├── test_script.c               # Script interpreter and validator tests
+    ├── gui_interactive_test.c      # Automated X11 event driver for GUI testing
     └── scripts/                    # Test scripts (including check.sh)
 ```

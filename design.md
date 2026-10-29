@@ -112,16 +112,27 @@ Terminator supports two execution paradigms, controlled by the `useProcess=True`
 - **Model:** Each tab worker is instantiated as an independent child process via `fork()`.
 - **CWD Isolation:** Kernel-level isolation is naturally preserved across processes.
 
-### 2.3 POSIX Shared Memory & Semaphore Synchronization
+### 2.3 Shared Memory & Cross-Process Synchronization
 To share the 10,000-command command history across all tabs regardless of execution mode:
-1. **Shared Memory Segment:** Created on startup using `shm_open()` with `O_CREAT | O_RDWR` and sized via `ftruncate()`:
-   $$\text{shm\_size} = \text{sizeof(SharedState)} \approx 41\,\text{MB}$$
-   Mapped into the address space of all processes via `mmap(..., MAP_SHARED, ...)`.
-2. **Process-Shared Semaphore:** The shared state header contains a POSIX semaphore:
-   ```c
-   sem_init(&shm->lock, 1 /* pshared = true */, 1 /* initial value */);
-   ```
-   Setting `pshared = 1` guarantees that mutual exclusion works reliably across independent forked processes as well as threads. Every history append or read operation locks the region using `sem_wait(&shm->lock)` and unlocks via `sem_post(&shm->lock)`.
+1. **Shared Memory Segment:**
+   - In **Process Mode**, allocated via anonymous shared memory:
+     ```c
+     state = mmap(NULL, sizeof(SharedState), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+     ```
+     $$\text{shm\_size} = \text{sizeof(SharedState)} \approx 41\,\text{MB}$$
+     Using `MAP_ANONYMOUS` guarantees that memory is inherited across `fork()` without creating dangling files in `/dev/shm` on abnormal termination.
+   - In **Thread Mode**, allocated on the heap via `calloc(1, sizeof(SharedState))` within the single shared address space.
+2. **Dual-Mode Mutual Exclusion:**
+   - On **Linux** in Process Mode, initializes an unnamed POSIX semaphore in the shared region:
+     ```c
+     sem_init(&state->sem, 1 /* pshared = true */, 1 /* initial value */);
+     ```
+   - On **macOS** (where unnamed POSIX semaphores cannot be shared across processes) and as a robust fallback, initializes a process-shared pthread mutex:
+     ```c
+     pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+     pthread_mutex_init(&state->lock, &attr);
+     ```
+   - All history append and query operations lock via `shm_lock(state)` and unlock via `shm_unlock(state)`, ensuring thread-safety and process-safety transparently.
 
 ---
 
@@ -176,15 +187,20 @@ Communication between the X11 GUI and each tab worker utilizes two unidirectiona
 
 | Message Type | Direction | Content / Purpose |
 | :--- | :--- | :--- |
-| `TAB_MSG_READY` | Tab $\to$ GUI | Worker thread/process initialized |
-| `TAB_MSG_CWD` | Tab $\to$ GUI | Tab changed working directory (updates tab title) |
+| `TAB_MSG_READY` | Tab $\to$ GUI | Worker thread/process finished startup |
 | `TAB_MSG_OUTPUT` | Tab $\to$ GUI | Stdout/stderr output chunks to append to screen |
-| `TAB_MSG_EXIT` | Tab $\to$ GUI | Shell exited (`exit` command or EOF) |
+| `TAB_MSG_PROMPT` | Tab $\to$ GUI | Updated prompt string |
+| `TAB_MSG_CWD` | Tab $\to$ GUI | Tab changed working directory (updates tab title) |
+| `TAB_MSG_CLEAR` | Tab $\to$ GUI | Clear screen request (`Ctrl+L`) |
+| `TAB_MSG_EXIT` | Tab $\to$ GUI | Shell exited (`exit` command or EOF with status) |
 | `GUI_MSG_LINE` | GUI $\to$ Tab | User committed command line to execute |
+| `GUI_MSG_KEYPRESS` | GUI $\to$ Tab | Single keystroke character |
+| `GUI_MSG_PASTE` | GUI $\to$ Tab | Pasted clipboard text block |
 | `GUI_MSG_SIGNAL`| GUI $\to$ Tab | Forwarded signal (`SIGINT`, `SIGTSTP`) |
 | `GUI_MSG_CLOSE` | GUI $\to$ Tab | Tab closed by user; worker should terminate |
+| `GUI_MSG_RESIZE` | GUI $\to$ Tab | Terminal dimensions changed |
 
-`proto_send()` and `proto_recv()` guarantee full packet framing across stream boundaries, preventing partial read tearing.
+`proto_send()` and `proto_recv()` guarantee full packet framing across stream boundaries, preventing partial read tearing. Additionally, `proto_send_text(int out_fd, const char *msg)` provides a unified abstraction: writing directly to raw file descriptors if `out_fd` is `STDOUT_FILENO`/`STDERR_FILENO`, or packing text into `TAB_MSG_OUTPUT` frames if connected to an IPC pipe.
 
 ### 4.2 Pipeline Orchestration & `dup2()` Binding
 For an $N$-command pipeline:
@@ -209,11 +225,18 @@ For an $N$-command pipeline:
 The shared memory segment maintains a rolling ring buffer storing up to 10,000 commands:
 ```c
 typedef struct {
-    char lines[SHM_HISTORY_MAX][LINE_MAXLEN]; /* 10,000 x 512 bytes */
-    int  head;   /* write pointer (0..9999) */
-    int  count;  /* total stored */
-    int  total;  /* monotonic count */
-} HistoryBuffer;
+    char cmd[MAX_CMD_LEN];      /* 4096-byte command string */
+    int  valid;                 /* 1 if this slot holds a real command */
+} HistoryEntry;
+
+typedef struct SharedState {
+    sem_t           sem;                        /* process-shared semaphore (Linux) */
+    pthread_mutex_t lock;                       /* process-shared mutex (macOS / fallback) */
+    int             use_sem;                    /* 1 if using POSIX semaphore */
+    int             count;                      /* total commands recorded */
+    int             head;                       /* next write index (ring) */
+    HistoryEntry    entries[HISTORY_CAPACITY];   /* 10,000-command ring buffer */
+} SharedState;
 ```
 
 #### Longest Common Substring (LCS) Search
