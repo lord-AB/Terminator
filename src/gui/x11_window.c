@@ -494,7 +494,10 @@ static void handle_tab_output(GuiState *gui, int tab_idx) {
         break;
     }
 
-    gui_redraw(gui);
+    /* Redraw if output belongs to active tab, or if tab bar/state changed */
+    if (tab_idx == gui->active_tab || msg_type == TAB_MSG_CWD || msg_type == TAB_MSG_EXIT) {
+        gui_redraw(gui);
+    }
 }
 
 /* ── Handle keyboard input ──────────────────────────────────────────── */

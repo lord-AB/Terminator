@@ -101,11 +101,16 @@ void screen_buf_add_text(ScreenBuf *sb, const char *text)
             if (len >= LINE_MAXLEN)
                 len = LINE_MAXLEN - 1;
 
-            char buf[LINE_MAXLEN];
-            memcpy(buf, p, len);
-            buf[len] = '\0';
+            /* Direct copy into destination ring slot (zero-copy) */
+            char *dest = sb->lines[sb->head];
+            memcpy(dest, p, len);
+            dest[len] = '\0';
 
-            screen_buf_add_line(sb, buf);
+            sb->head = (sb->head + 1) % SCROLLBACK_MAX;
+            if (sb->count < SCROLLBACK_MAX)
+                sb->count++;
+            sb->total++;
+
             p = nl + 1;   /* skip past the newline */
         } else {
             /* No more newlines — add the remaining text as-is. */

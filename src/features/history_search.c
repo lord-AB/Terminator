@@ -13,12 +13,31 @@ int history_compute_lcs(const char *s1, const char *s2) {
     int n = (int)strlen(s2);
     if (m == 0 || n == 0) return 0;
 
-    int *prev = (int *)calloc(n + 1, sizeof(int));
-    int *curr = (int *)calloc(n + 1, sizeof(int));
-    if (!prev || !curr) {
-        free(prev);
-        free(curr);
-        return 0;
+    /* Ensure s2 is the shorter string so DP row size (n + 1) is minimized */
+    if (m < n) {
+        const char *t = s1; s1 = s2; s2 = t;
+        int tn = m; m = n; n = tn;
+    }
+
+    #define STACK_DP_CAP 512
+    int stack_prev[STACK_DP_CAP];
+    int stack_curr[STACK_DP_CAP];
+    int *prev = stack_prev;
+    int *curr = stack_curr;
+    int allocated = 0;
+
+    if (n + 1 > STACK_DP_CAP) {
+        prev = (int *)calloc(n + 1, sizeof(int));
+        curr = (int *)calloc(n + 1, sizeof(int));
+        if (!prev || !curr) {
+            free(prev);
+            free(curr);
+            return 0;
+        }
+        allocated = 1;
+    } else {
+        memset(stack_prev, 0, (n + 1) * sizeof(int));
+        memset(stack_curr, 0, (n + 1) * sizeof(int));
     }
 
     int max_len = 0;
@@ -39,8 +58,11 @@ int history_compute_lcs(const char *s1, const char *s2) {
         memset(curr, 0, (n + 1) * sizeof(int));
     }
 
-    free(prev);
-    free(curr);
+    if (allocated) {
+        free(prev);
+        free(curr);
+    }
+    #undef STACK_DP_CAP
     return max_len;
 }
 
@@ -88,10 +110,16 @@ int history_search_find(SharedState *shm, const char *term, HistorySearchResult 
     }
 
     /* ── 2. Compute Longest Common Substring (LCS) for all commands ─── */
-    int *lcs_lens = (int *)malloc(stored * sizeof(int));
-    if (!lcs_lens) {
-        shm_unlock(shm);
-        return 0;
+    int stack_lcs[1024];
+    int *lcs_lens = stack_lcs;
+    int lcs_allocated = 0;
+    if (stored > 1024) {
+        lcs_lens = (int *)malloc(stored * sizeof(int));
+        if (!lcs_lens) {
+            shm_unlock(shm);
+            return 0;
+        }
+        lcs_allocated = 1;
     }
 
     int max_len = 0;
@@ -127,7 +155,9 @@ int history_search_find(SharedState *shm, const char *term, HistorySearchResult 
     result->max_lcs_len = max_len;
     result->is_exact = 0;
 
-    free(lcs_lens);
+    if (lcs_allocated) {
+        free(lcs_lens);
+    }
     shm_unlock(shm);
     #undef GET_CMD
 

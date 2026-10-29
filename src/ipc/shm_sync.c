@@ -40,9 +40,14 @@ SharedState *shm_create(ExecMode mode) {
         }
     }
 
-    /* Zero out the entire region */
-    memset(state, 0, sizeof(SharedState));
+    /* Zero out header and metadata on demand — avoids eagerly faulting 41MB */
     state->use_sem = 0;
+    state->count   = 0;
+    state->head    = 0;
+    memset(&state->lock, 0, sizeof(state->lock));
+#ifndef __APPLE__
+    memset(&state->sem, 0, sizeof(state->sem));
+#endif
 
 #ifndef __APPLE__
     if (mode == MODE_PROCESS) {

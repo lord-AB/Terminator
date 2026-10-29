@@ -9,16 +9,17 @@
 #include <X11/keysym.h>
 
 #define AUTOCOMPLETE_MAX_MATCHES 32
+#define AUTOCOMPLETE_NAME_MAX    256
 #define AUTOCOMPLETE_MENU_MAXLEN 2048
 
 typedef struct {
-    int  in_select_mode;                                  /* 1 if waiting for user choice (1..N) */
-    char matches[AUTOCOMPLETE_MAX_MATCHES][MAX_PATH_LEN]; /* matching filenames */
+    int  in_select_mode;                                           /* 1 if waiting for user choice (1..N) */
+    char matches[AUTOCOMPLETE_MAX_MATCHES][AUTOCOMPLETE_NAME_MAX]; /* matching filenames */
     int  num_matches;
-    int  word_start;                                      /* start index of word in input */
-    int  word_len;                                        /* length of prefix in input */
-    char dir_part[MAX_PATH_LEN];                          /* directory prefix if any (e.g. "dir/") */
-    char menu_text[AUTOCOMPLETE_MENU_MAXLEN];             /* suggestion menu formatted text */
+    int  word_start;                                               /* start index of word in input */
+    int  word_len;                                                 /* length of prefix in input */
+    char dir_part[MAX_PATH_LEN];                                   /* directory prefix if any (e.g. "dir/") */
+    char menu_text[AUTOCOMPLETE_MENU_MAXLEN];                      /* suggestion menu formatted text */
 } AutocompleteState;
 
 typedef struct ScreenBuf ScreenBuf;

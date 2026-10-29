@@ -10,7 +10,7 @@ TARGET   = terminator
 BUILDDIR = build
 
 # ── Compiler flags ──────────────────────────────────────────────────
-CFLAGS   = -Wall -Wextra -g -pthread
+CFLAGS   = -Wall -Wextra -O2 -g -pthread
 CFLAGS  += -Iinclude
 
 # ── Platform detection for X11 paths ────────────────────────────────

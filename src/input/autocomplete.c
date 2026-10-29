@@ -116,8 +116,8 @@ int autocomplete_scan(const char *cwd, const char *word, AutocompleteState *stat
 
         if (strncmp(entry->d_name, file_prefix, prefix_len) == 0) {
             if (state->num_matches < AUTOCOMPLETE_MAX_MATCHES) {
-                strncpy(state->matches[state->num_matches], entry->d_name, MAX_PATH_LEN - 1);
-                state->matches[state->num_matches][MAX_PATH_LEN - 1] = '\0';
+                strncpy(state->matches[state->num_matches], entry->d_name, AUTOCOMPLETE_NAME_MAX - 1);
+                state->matches[state->num_matches][AUTOCOMPLETE_NAME_MAX - 1] = '\0';
                 state->num_matches++;
             }
         }
