@@ -60,11 +60,6 @@ int hotkey_cfg_load(HotkeyConfig *cfg, const char *path, char *err_msg, size_t e
 HotkeyAction hotkey_cfg_match(const HotkeyConfig *cfg, KeySym keysym, unsigned int state);
 
 /*
- * Convert HotkeyAction enum to textual name.
- */
-const char *hotkey_action_name(HotkeyAction action);
-
-/*
  * Convert textual action name to HotkeyAction enum.
  */
 HotkeyAction hotkey_action_from_name(const char *name);

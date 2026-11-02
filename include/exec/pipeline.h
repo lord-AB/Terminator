@@ -9,16 +9,6 @@
 #include "parser/ast.h"
 
 /*
- * Executes a command with I/O redirections (< infile, > outfile).
- * - In child: chdir(ctx->cwd) and binds redirected FDs before execvp.
- * - Reports missing input file without executing the command.
- * - Streams output to out_fd.
- * - Updates ctx->last_status.
- * Returns the exit status.
- */
-int pipeline_exec_cmd(ShellContext *ctx, Command *cmd, int out_fd);
-
-/*
  * Executes a pipeline of N commands connected by N-1 pipes.
  * - Creates N-1 inter-process pipes.
  * - Wires child 0 stdout -> pipe 0; child i stdin -> pipe i-1, stdout -> pipe i;

@@ -57,51 +57,6 @@ static void expand_globs(Command *cmd) {
     cmd->argc = new_argc;
 }
 
-int pipeline_exec_cmd(ShellContext *ctx, Command *cmd, int out_fd) {
-    if (!ctx || !cmd) return 0;
-
-    /* Handle redirection-only invocation without a command (e.g. "< missing_file.txt") */
-    if (cmd->argc == 0 || !cmd->argv[0]) {
-        if (cmd->infile && cmd->infile[0] != '\0') {
-            char in_path[MAX_PATH_LEN];
-            redirect_resolve_path(ctx, cmd->infile, in_path, sizeof(in_path));
-            int in_fd = open(in_path, O_RDONLY);
-            if (in_fd < 0) {
-                char err[MAX_CMD_LEN];
-                snprintf(err, sizeof(err), "terminator: %s: %s\n", cmd->infile,
-                         errno == ENOENT ? "No such file or directory" : strerror(errno));
-                if (out_fd >= 0) proto_send(out_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
-                ctx->last_status = 1;
-                return 1;
-            }
-            close(in_fd);
-        }
-        if (cmd->outfile && cmd->outfile[0] != '\0') {
-            char out_path[MAX_PATH_LEN];
-            redirect_resolve_path(ctx, cmd->outfile, out_path, sizeof(out_path));
-            int flags = O_WRONLY | O_CREAT | (cmd->append_out ? O_APPEND : O_TRUNC);
-            int fd = open(out_path, flags, 0644);
-            if (fd < 0) {
-                char err[MAX_CMD_LEN];
-                snprintf(err, sizeof(err), "terminator: %s: %s\n", cmd->outfile, strerror(errno));
-                if (out_fd >= 0) proto_send(out_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
-                ctx->last_status = 1;
-                return 1;
-            }
-            close(fd);
-        }
-        ctx->last_status = 0;
-        return 0;
-    }
-
-    /* Wrap single command in a 1-command pipeline */
-    Pipeline pl;
-    pipeline_init(&pl);
-    pl.commands[0] = *cmd;
-    pl.num_commands = 1;
-    return pipeline_exec_pipeline(ctx, &pl, out_fd);
-}
-
 int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int num_pids,
                              const char *cmd_str, int capture_fd, int out_fd, int in_fd) {
     if (!ctx || num_pids <= 0) return 0;

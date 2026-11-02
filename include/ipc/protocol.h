@@ -42,18 +42,6 @@ typedef struct {
 /* Max payload size to prevent runaway reads */
 #define MAX_PAYLOAD_SIZE  (64 * 1024)
 
-/* ── GUI → Tab packet ───────────────────────────────────────────────── */
-typedef struct {
-    PacketHeader header;
-    char payload[MAX_CMD_LEN];   /* variable-length, actual size in header.length */
-} GuiToTabMsg;
-
-/* ── Tab → GUI packet ───────────────────────────────────────────────── */
-typedef struct {
-    PacketHeader header;
-    char payload[PIPE_BUF_SIZE]; /* variable-length, actual size in header.length */
-} TabToGuiMsg;
-
 /* ── Wire I/O functions ─────────────────────────────────────────────── */
 
 /*

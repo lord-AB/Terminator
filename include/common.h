@@ -46,11 +46,6 @@ typedef enum {
 #define TERM_LOG(fmt, ...) \
     fprintf(stderr, "[terminator] " fmt "\n", ##__VA_ARGS__)
 
-#define TERM_DIE(fmt, ...) do {                   \
-    fprintf(stderr, "[terminator FATAL] " fmt "\n", ##__VA_ARGS__); \
-    exit(EXIT_FAILURE);                            \
-} while (0)
-
 #define UNUSED(x) ((void)(x))
 
 /* ── Safe close helper ──────────────────────────────────────────────── */

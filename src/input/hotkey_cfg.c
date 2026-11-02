@@ -31,13 +31,6 @@ static const struct {
     { HOTKEY_ACTION_SEARCH_HISTORY,    "search_history",   XK_r,         ControlMask }
 };
 
-const char *hotkey_action_name(HotkeyAction action) {
-    if (action >= 0 && action < HOTKEY_ACTION_COUNT) {
-        return g_action_defs[action].name;
-    }
-    return "unknown";
-}
-
 HotkeyAction hotkey_action_from_name(const char *name) {
     if (!name) return HOTKEY_ACTION_NONE;
 
