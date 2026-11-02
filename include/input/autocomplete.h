@@ -20,6 +20,7 @@ typedef struct {
     int  word_len;                                                 /* length of prefix in input */
     char dir_part[MAX_PATH_LEN];                                   /* directory prefix if any (e.g. "dir/") */
     char menu_text[AUTOCOMPLETE_MENU_MAXLEN];                      /* suggestion menu formatted text */
+    int  quote_char;                                               /* quote style: 0 for unquoted, '\'' or '"' */
 } AutocompleteState;
 
 typedef struct ScreenBuf ScreenBuf;
@@ -34,6 +35,7 @@ void autocomplete_cancel(AutocompleteState *state);
  * Returns 0 on success, -1 if no word before cursor.
  */
 int autocomplete_find_word(const char *input, int cursor_pos, int *out_start, int *out_len);
+int autocomplete_find_word_ex(const char *input, int cursor_pos, int *out_start, int *out_len, int *out_quote);
 
 /*
  * Scans directory for entries matching the word prefix.
