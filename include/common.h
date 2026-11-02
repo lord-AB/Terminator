@@ -17,7 +17,7 @@ typedef enum {
 } ExecMode;
 
 /* ── Limits ─────────────────────────────────────────────────────────── */
-#define MAX_TABS            16
+#define MAX_TABS            32
 #define HISTORY_CAPACITY    10000
 #define HISTORY_DISPLAY     1000
 #define MAX_CMD_LEN         4096

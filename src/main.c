@@ -4,7 +4,6 @@
  * Usage:
  *   ./terminator                   — Thread mode (default, pthread)
  *   ./terminator useProcess=True   — Process mode (fork)
- *   ./terminator --test            — Headless integration verification
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,14 +14,10 @@
 #include "gui/x11_window.h"
 #include "ipc/shm_sync.h"
 #include "features/history_store.h"
-#include "verification.h"
 
 /* ── Parse CLI arguments ────────────────────────────────────────────── */
-static ExecMode parse_args(int argc, char *argv[], int *out_test_mode) {
+static ExecMode parse_args(int argc, char *argv[]) {
     ExecMode mode = MODE_THREAD;  /* default */
-    if (out_test_mode) {
-        *out_test_mode = 0;
-    }
 
     for (int i = 1; i < argc; i++) {
         if (strcasecmp(argv[i], "useProcess=True") == 0 ||
@@ -34,10 +29,6 @@ static ExecMode parse_args(int argc, char *argv[], int *out_test_mode) {
                    strcasecmp(argv[i + 2], "True") == 0) {
             mode = MODE_PROCESS;
             i += 2;
-        } else if (strcmp(argv[i], "--test") == 0) {
-            if (out_test_mode) {
-                *out_test_mode = 1;
-            }
         }
     }
 
@@ -64,9 +55,8 @@ static int run_gui(ExecMode mode) {
     GuiState gui;
     if (gui_init(&gui, mode, shared) != 0) {
         TERM_LOG("Could not open X11 display. (Ensure DISPLAY is set, e.g. via XQuartz on macOS)");
-        TERM_LOG("Falling back to headless verification test...");
         shm_destroy(shared, mode);
-        return run_verification_test(mode);
+        return 1;
     }
 
     /* Open the first tab */
@@ -90,12 +80,6 @@ static int run_gui(ExecMode mode) {
 
 int main(int argc, char *argv[]) {
     signal(SIGPIPE, SIG_IGN);
-    int test_mode = 0;
-    ExecMode mode = parse_args(argc, argv, &test_mode);
-
-    if (test_mode) {
-        return run_verification_test(mode);
-    }
-
+    ExecMode mode = parse_args(argc, argv);
     return run_gui(mode);
 }

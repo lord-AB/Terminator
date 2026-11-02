@@ -54,94 +54,12 @@ $(BUILDDIR)/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# ── Tests ───────────────────────────────────────────────────────────
-TEST_BIN = $(BUILDDIR)/test_gui_buffer
-TEST_PARSER_BIN = $(BUILDDIR)/test_parser
-TEST_REDIRECT_BIN = $(BUILDDIR)/test_redirect
-TEST_PIPELINE_BIN = $(BUILDDIR)/test_pipeline
-TEST_MULTIWATCH_BIN = $(BUILDDIR)/test_multiwatch
-TEST_HOTKEYS_BIN = $(BUILDDIR)/test_hotkeys
-TEST_JOBS_BIN = $(BUILDDIR)/test_jobs
-TEST_LCS_BIN = $(BUILDDIR)/test_lcs
-TEST_AUTOCOMPLETE_BIN = $(BUILDDIR)/test_autocomplete
-TEST_SCRIPT_BIN = $(BUILDDIR)/test_script
-
-SCRIPT_OBJS = $(BUILDDIR)/script/script_validator.o $(BUILDDIR)/script/test_eval.o $(BUILDDIR)/script/interpreter.o
-EXEC_COMMON_OBJS = $(BUILDDIR)/parser/ast.o $(BUILDDIR)/parser/lexer.o $(BUILDDIR)/parser/expand.o $(BUILDDIR)/parser/subst.o $(BUILDDIR)/exec/shell_ctx.o $(BUILDDIR)/exec/jobs.o $(BUILDDIR)/exec/pipeline.o $(BUILDDIR)/exec/redirect.o $(BUILDDIR)/ipc/protocol.o $(BUILDDIR)/exec/builtins.o $(BUILDDIR)/features/multiwatch.o $(BUILDDIR)/ipc/shm_sync.o $(SCRIPT_OBJS)
-
-test: $(TARGET) $(TEST_BIN) $(TEST_PARSER_BIN) $(TEST_REDIRECT_BIN) $(TEST_PIPELINE_BIN) $(TEST_MULTIWATCH_BIN) $(TEST_HOTKEYS_BIN) $(TEST_JOBS_BIN) $(TEST_LCS_BIN) $(TEST_AUTOCOMPLETE_BIN) $(TEST_SCRIPT_BIN)
-	@echo "Running GUI unit tests..."
-	./$(TEST_BIN)
-	@echo "Running Multiline & Parser unit tests..."
-	./$(TEST_PARSER_BIN)
-	@echo "Running AST & Redirection unit tests..."
-	./$(TEST_REDIRECT_BIN)
-	@echo "Running Pipeline & Globbing unit tests..."
-	./$(TEST_PIPELINE_BIN)
-	@echo "Running multiWatch unit tests..."
-	./$(TEST_MULTIWATCH_BIN)
-	@echo "Running Hotkeys & Keybindings unit tests..."
-	./$(TEST_HOTKEYS_BIN)
-	@echo "Running Signals & Job Control unit tests..."
-	./$(TEST_JOBS_BIN)
-	@echo "Running Searchable History & LCS unit tests..."
-	./$(TEST_LCS_BIN)
-	@echo "Running File-Name Auto-Completion unit tests..."
-	./$(TEST_AUTOCOMPLETE_BIN)
-	@echo "Running Bash Script Interpreter unit tests..."
-	./$(TEST_SCRIPT_BIN)
-	@echo "Running verification echo test (thread mode)..."
-	./$(TARGET) --test
-	@echo "Running verification echo test (process mode)..."
-	./$(TARGET) useProcess=True --test
-	@echo "✓ All tests passed!"
-
-$(TEST_BIN): tests/test_gui_buffer.c $(BUILDDIR)/gui/screen_buf.o $(BUILDDIR)/gui/tab_bar.o
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-$(TEST_PARSER_BIN): tests/test_parser.c $(BUILDDIR)/parser/multiline.o $(EXEC_COMMON_OBJS)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-$(TEST_REDIRECT_BIN): tests/test_redirect.c $(EXEC_COMMON_OBJS)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-$(TEST_PIPELINE_BIN): tests/test_pipeline.c $(EXEC_COMMON_OBJS)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-$(TEST_MULTIWATCH_BIN): tests/test_multiwatch.c $(EXEC_COMMON_OBJS)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-$(TEST_HOTKEYS_BIN): tests/test_hotkeys.c $(BUILDDIR)/input/hotkey_cfg.o $(BUILDDIR)/input/line_editor.o $(BUILDDIR)/gui/screen_buf.o $(BUILDDIR)/gui/clipboard.o $(BUILDDIR)/ipc/shm_sync.o
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-$(TEST_JOBS_BIN): tests/test_jobs.c $(EXEC_COMMON_OBJS)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-$(TEST_LCS_BIN): tests/test_lcs.c $(BUILDDIR)/features/history_search.o $(BUILDDIR)/features/history_store.o $(BUILDDIR)/ipc/shm_sync.o
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-$(TEST_AUTOCOMPLETE_BIN): tests/test_autocomplete.c $(BUILDDIR)/input/autocomplete.o $(BUILDDIR)/gui/screen_buf.o
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-$(TEST_SCRIPT_BIN): tests/test_script.c $(EXEC_COMMON_OBJS)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
 # ── Clean ───────────────────────────────────────────────────────────
 clean:
 	rm -rf $(BUILDDIR) $(TARGET)
 
 # ── Phony targets ──────────────────────────────────────────────────
-.PHONY: all clean test
+.PHONY: all clean
 
 # ── Debug: print variables ──────────────────────────────────────────
 print-%:

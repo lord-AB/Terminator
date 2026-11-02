@@ -52,7 +52,7 @@ void clipboard_request_paste(GuiState *gui) {
                           gui->window,
                           CurrentTime);
     } else {
-        /* Fallback for headless testing or in-process paste */
+        /* Fallback for in-process paste */
         if (gui->clipboard.len > 0) {
             clipboard_paste_text(gui, gui->clipboard.text, gui->clipboard.len);
         }

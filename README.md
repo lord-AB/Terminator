@@ -128,7 +128,6 @@ terminator/
 │
 ├── include/                        # Subsystem headers
 │   ├── common.h                    # Constants, types, macros
-│   ├── verification.h              # Headless multi-stage integration verification engine
 │   ├── gui/                        # X11 window, tab bar, screen buffer, clipboard
 │   ├── ipc/                        # Protocol framing, worker threading/forking, SHM sync
 │   ├── input/                      # Line editor, hotkeys, auto-completion
@@ -137,28 +136,13 @@ terminator/
 │   ├── features/                   # History store, LCS search, multiWatch
 │   └── script/                     # Script validator, condition evaluator, interpreter
 │
-├── src/                            # Implementation files mirroring include/
-│   ├── main.c                      # Entry point, CLI flags, initialization
-│   ├── verification.c              # 11-stage automated verification engine for headless mode
-│   ├── gui/                        # X11 rendering and event dispatching
-│   ├── ipc/                        # IPC pipes, worker threads/processes, SHM
-│   ├── input/                      # Terminal input, auto-completion, hotkeys
-│   ├── parser/                     # Lexing, AST construction, substitutions
-│   ├── exec/                       # Execution engine, jobs, built-in commands
-│   ├── features/                   # Multiwatch, history ring-buffer, LCS
-│   └── script/                     # Bash script syntax validator and execution engine
-│
-└── tests/                          # Automated unit test suite
-    ├── test_gui_buffer.c           # Screen buffer ring and scrolling tests
-    ├── test_parser.c               # Lexer, quoting, and substitution tests
-    ├── test_redirect.c             # Redirection and missing file checks
-    ├── test_pipeline.c             # Pipeline orchestration and wildcard tests
-    ├── test_multiwatch.c           # MultiWatch concurrency and polling tests
-    ├── test_hotkeys.c              # Hotkey parsing and fallback tests
-    ├── test_jobs.c                 # Process group and signal delivery tests
-    ├── test_lcs.c                  # Longest Common Substring algorithm tests
-    ├── test_autocomplete.c         # File completion, LCP, and menu tests
-    ├── test_script.c               # Script interpreter and validator tests
-    ├── gui_interactive_test.c      # Automated X11 event driver for GUI testing
-    └── scripts/                    # Test scripts (including check.sh)
+└── src/                            # Implementation files mirroring include/
+    ├── main.c                      # Entry point, CLI flags, initialization
+    ├── gui/                        # X11 rendering and event dispatching
+    ├── ipc/                        # IPC pipes, worker threads/processes, SHM
+    ├── input/                      # Terminal input, auto-completion, hotkeys
+    ├── parser/                     # Lexing, AST construction, substitutions
+    ├── exec/                       # Execution engine, jobs, built-in commands
+    ├── features/                   # Multiwatch, history ring-buffer, LCS
+    └── script/                     # Bash script syntax validator and execution engine
 ```
