@@ -26,7 +26,8 @@ int builtins_is_builtin(const char *cmd) {
         strcmp(cmd, "fg") == 0 ||
         strcmp(cmd, "bg") == 0 ||
         strcmp(cmd, "source") == 0 ||
-        strcmp(cmd, ".") == 0) {
+        strcmp(cmd, ".") == 0 ||
+        strcmp(cmd, "clear") == 0) {
         return 1;
     }
     return 0;
@@ -35,6 +36,7 @@ int builtins_is_builtin(const char *cmd) {
 int builtin_cd(ShellContext *ctx, int argc, char *argv[], int out_fd) {
     const char *target = NULL;
     char target_path[MAX_PATH_LEN];
+    TERM_LOG("tab[%d]: builtin 'cd' called (argc=%d)", ctx ? ctx->tab_id : 0, argc);
 
     if (argc < 2 || strcmp(argv[1], "~") == 0) {
         /* Default to HOME */
@@ -130,6 +132,7 @@ int builtin_exit(ShellContext *ctx, int argc, char *argv[], int out_fd) {
         exit_code = atoi(argv[1]);
     }
     ctx->last_status = exit_code;
+    TERM_LOG("tab[%d]: builtin 'exit' called (code=%d)", ctx ? ctx->tab_id : 0, exit_code);
 
     /* Send exit notification to GUI */
     if (out_fd >= 0) {
@@ -142,6 +145,7 @@ int builtin_exit(ShellContext *ctx, int argc, char *argv[], int out_fd) {
 int builtin_history(ShellContext *ctx, int argc, char *argv[], int out_fd, SharedState *shared) {
     (void)argc;
     (void)argv;
+    TERM_LOG("tab[%d]: builtin 'history' called", ctx ? ctx->tab_id : 0);
     if (!shared) {
         proto_send_text(out_fd, "history: shared memory not available\n");
         ctx->last_status = BUILTIN_ERROR;
@@ -165,6 +169,7 @@ int builtin_history(ShellContext *ctx, int argc, char *argv[], int out_fd, Share
 }
 
 int builtin_multiwatch(ShellContext *ctx, int argc, char *argv[], int out_fd) {
+    TERM_LOG("tab[%d]: builtin 'multiWatch' called", ctx ? ctx->tab_id : 0);
     char *cmds[MULTIWATCH_MAX_CMDS];
     int count = multiwatch_parse_args(argc, argv, cmds, MULTIWATCH_MAX_CMDS);
     if (count <= 0) {
@@ -183,6 +188,7 @@ int builtin_multiwatch(ShellContext *ctx, int argc, char *argv[], int out_fd) {
 int builtin_jobs(ShellContext *ctx, int argc, char *argv[], int out_fd) {
     (void)argc;
     (void)argv;
+    TERM_LOG("tab[%d]: builtin 'jobs' called", ctx ? ctx->tab_id : 0);
     if (!ctx || !ctx->jobs) return BUILTIN_SUCCESS;
     jobs_list(ctx->jobs, out_fd);
     ctx->last_status = BUILTIN_SUCCESS;
@@ -190,6 +196,7 @@ int builtin_jobs(ShellContext *ctx, int argc, char *argv[], int out_fd) {
 }
 
 int builtin_fg(ShellContext *ctx, int argc, char *argv[], int out_fd) {
+    TERM_LOG("tab[%d]: builtin 'fg' called", ctx ? ctx->tab_id : 0);
     if (!ctx || !ctx->jobs) return BUILTIN_ERROR;
     int job_id = 0;
     if (argc >= 2 && argv[1]) {
@@ -204,6 +211,7 @@ int builtin_fg(ShellContext *ctx, int argc, char *argv[], int out_fd) {
 }
 
 int builtin_bg(ShellContext *ctx, int argc, char *argv[], int out_fd) {
+    TERM_LOG("tab[%d]: builtin 'bg' called", ctx ? ctx->tab_id : 0);
     if (!ctx || !ctx->jobs) return BUILTIN_ERROR;
     int job_id = 0;
     if (argc >= 2 && argv[1]) {
@@ -217,6 +225,7 @@ int builtin_bg(ShellContext *ctx, int argc, char *argv[], int out_fd) {
 }
 
 int builtin_source(ShellContext *ctx, int argc, char *argv[], int out_fd) {
+    TERM_LOG("tab[%d]: builtin 'source' called (%s)", ctx ? ctx->tab_id : 0, argc >= 2 ? argv[1] : "none");
     if (argc < 2 || !argv[1]) {
         proto_send_text(out_fd, "terminator: source: filename argument required\n");
         ctx->last_status = 1;
@@ -227,8 +236,23 @@ int builtin_source(ShellContext *ctx, int argc, char *argv[], int out_fd) {
     return res;
 }
 
+int builtin_clear(ShellContext *ctx, int argc, char *argv[], int out_fd) {
+    (void)argc;
+    (void)argv;
+    TERM_LOG("tab[%d]: builtin 'clear' called", ctx ? ctx->tab_id : 0);
+    if (out_fd >= 0) {
+        proto_send(out_fd, TAB_MSG_CLEAR, NULL, 0);
+    }
+    if (ctx) ctx->last_status = BUILTIN_SUCCESS;
+    return BUILTIN_SUCCESS;
+}
+
 int builtins_exec(ShellContext *ctx, int argc, char *argv[], int out_fd, SharedState *shared) {
     if (argc == 0 || !argv[0]) return BUILTIN_SUCCESS;
+
+    if (strcmp(argv[0], "clear") == 0) {
+        return builtin_clear(ctx, argc, argv, out_fd);
+    }
 
     if (strcmp(argv[0], "cd") == 0) {
         return builtin_cd(ctx, argc, argv, out_fd);

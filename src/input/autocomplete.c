@@ -354,6 +354,7 @@ int autocomplete_handle_tab(ScreenBuf *sb) {
     }
 
     int num = autocomplete_scan(sb->cwd, word, &sb->autocomplete);
+    TERM_LOG("autocomplete: found %d matches for word '%s'", num, word);
     if (num == 0) {
         /* No match: do nothing */
         return 0;
@@ -458,6 +459,7 @@ int autocomplete_handle_key(ScreenBuf *sb, KeySym keysym, char ch) {
     if (ch >= '1' && ch <= '9') {
         int choice = ch - '1';
         if (choice < sb->autocomplete.num_matches) {
+            TERM_LOG("autocomplete: user selected #%d (%s)", choice + 1, sb->autocomplete.matches[choice]);
             int is_dir = check_is_dir(sb->cwd, sb->autocomplete.dir_part,
                                       sb->autocomplete.matches[choice]);
             char raw_replacement[MAX_PATH_LEN * 2];

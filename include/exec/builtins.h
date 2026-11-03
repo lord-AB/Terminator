@@ -40,5 +40,6 @@ int builtin_jobs(ShellContext *ctx, int argc, char *argv[], int out_fd);
 int builtin_fg(ShellContext *ctx, int argc, char *argv[], int out_fd);
 int builtin_bg(ShellContext *ctx, int argc, char *argv[], int out_fd);
 int builtin_source(ShellContext *ctx, int argc, char *argv[], int out_fd);
+int builtin_clear(ShellContext *ctx, int argc, char *argv[], int out_fd);
 
 #endif /* EXEC_BUILTINS_H */

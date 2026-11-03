@@ -389,8 +389,14 @@ int interpreter_run_file(ShellContext *ctx, const char *filepath, int argc, char
         /* Check for variable assignment: NAME=value */
         char vname[64], vval[MAX_CMD_LEN];
         if (is_var_assign(line, vname, sizeof(vname), vval, sizeof(vval))) {
+            char subst_val[MAX_CMD_LEN];
+            if (subst_expand(run_ctx, vval, subst_val, sizeof(subst_val)) < 0) {
+                strncpy(subst_val, vval, sizeof(subst_val) - 1);
+                subst_val[sizeof(subst_val) - 1] = '\0';
+            }
+
             char exp_val[MAX_CMD_LEN];
-            expand_variables(run_ctx, vval, exp_val, sizeof(exp_val));
+            expand_variables(run_ctx, subst_val, exp_val, sizeof(exp_val));
 
             /* Strip quotes if present */
             size_t elen = strlen(exp_val);

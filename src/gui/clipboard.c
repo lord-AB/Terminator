@@ -38,11 +38,13 @@ void clipboard_copy(GuiState *gui, const char *text, size_t len) {
         XSetSelectionOwner(gui->display, gui->clipboard.atom_clipboard, gui->window, CurrentTime);
         XSetSelectionOwner(gui->display, XA_PRIMARY, gui->window, CurrentTime);
     }
+    TERM_LOG("clipboard_copy: %zu bytes copied to CLIPBOARD and PRIMARY", len);
 }
 
 void clipboard_request_paste(GuiState *gui) {
     if (!gui) return;
 
+    TERM_LOG("clipboard_request_paste: requesting paste");
     if (gui->display && gui->window) {
         /* Request UTF8_STRING from CLIPBOARD; if no owner, will report None */
         XConvertSelection(gui->display,
@@ -98,6 +100,7 @@ void clipboard_handle_selection_request(GuiState *gui, XSelectionRequestEvent *r
 void clipboard_handle_selection_notify(GuiState *gui, XSelectionEvent *ev) {
     if (!gui || !ev) return;
 
+    TERM_LOG("clipboard: selection notify received (property=0x%lx)", (unsigned long)ev->property);
     if (ev->property != None) {
         Atom actual_type;
         int actual_format;
@@ -128,6 +131,7 @@ void clipboard_paste_text(GuiState *gui, const char *text, size_t len) {
     ScreenBuf *sb = gui->tabs[gui->active_tab].screen;
     if (!sb) return;
 
+    TERM_LOG("clipboard: pasting %zu bytes to tab[%d]", len, gui->active_tab);
     for (size_t i = 0; i < len; i++) {
         char ch = text[i];
         if (ch == '\r') continue;

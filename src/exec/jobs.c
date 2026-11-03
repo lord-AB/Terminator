@@ -39,6 +39,10 @@ void jobs_destroy(JobTable *jt) {
             close(j->capture_fd);
             j->capture_fd = -1;
         }
+        if (j->stdin_fd >= 0) {
+            close(j->stdin_fd);
+            j->stdin_fd = -1;
+        }
     }
     free(jt);
 }
@@ -55,7 +59,22 @@ Job *jobs_add(JobTable *jt, pid_t pgid, pid_t pids[], int num_pids,
     Job *j = &jt->jobs[jt->count];
     memset(j, 0, sizeof(Job));
 
-    j->job_id = jt->next_job_id++;
+    /* Find smallest available job_id not currently in use */
+    int next_id = 1;
+    for (int id = 1; id <= MAX_JOBS; id++) {
+        int in_use = 0;
+        for (int i = 0; i < jt->count; i++) {
+            if (jt->jobs[i].job_id == id) {
+                in_use = 1;
+                break;
+            }
+        }
+        if (!in_use) {
+            next_id = id;
+            break;
+        }
+    }
+    j->job_id = next_id;
     j->pgid = pgid;
     j->num_pids = num_pids > MAX_COMMANDS_IN_PIPELINE ? MAX_COMMANDS_IN_PIPELINE : num_pids;
     for (int k = 0; k < j->num_pids; k++) {
@@ -67,6 +86,7 @@ Job *jobs_add(JobTable *jt, pid_t pgid, pid_t pids[], int num_pids,
     }
     j->state = state;
     j->capture_fd = capture_fd;
+    j->stdin_fd = -1;
     j->is_current = 1;
 
     jt->count++;
@@ -111,6 +131,10 @@ void jobs_remove(JobTable *jt, int job_id) {
             if (jt->jobs[i].capture_fd >= 0) {
                 close(jt->jobs[i].capture_fd);
                 jt->jobs[i].capture_fd = -1;
+            }
+            if (jt->jobs[i].stdin_fd >= 0) {
+                close(jt->jobs[i].stdin_fd);
+                jt->jobs[i].stdin_fd = -1;
             }
             /* Shift left */
             for (int k = i; k < jt->count - 1; k++) {
@@ -249,10 +273,11 @@ int jobs_fg(ShellContext *ctx, JobTable *jt, int job_id, int out_fd, int in_fd) 
     strncpy(cmd_copy, j->cmd, sizeof(cmd_copy) - 1);
     cmd_copy[sizeof(cmd_copy) - 1] = '\0';
     int capture_fd = j->capture_fd;
+    int stdin_fd = j->stdin_fd;
     int jid = j->job_id;
 
     /* Wait in foreground */
-    int res = pipeline_wait_foreground(ctx, pgid, pids, num_pids, cmd_copy, capture_fd, out_fd, in_fd);
+    int res = pipeline_wait_foreground(ctx, pgid, pids, num_pids, cmd_copy, capture_fd, out_fd, in_fd, stdin_fd);
 
     /* If job was stopped again (WIFSTOPPED), state was updated in wait loop */
     Job *check = jobs_find_by_id(jt, jid);

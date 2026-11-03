@@ -82,7 +82,7 @@ int multiline_is_incomplete(const char *input) {
         return 1;
     }
 
-    /* Check for trailing backslash (line continuation) */
+    /* Check for trailing backslash (line continuation) or trailing pipe */
     size_t len = strlen(input);
     /* Ignore trailing whitespace */
     while (len > 0 && isspace((unsigned char)input[len - 1])) {
@@ -90,6 +90,20 @@ int multiline_is_incomplete(const char *input) {
     }
 
     if (len > 0) {
+        /* 1. Trailing pipe: cmd | */
+        if (input[len - 1] == '|') {
+            size_t bslash_count = 0;
+            ssize_t i = (ssize_t)len - 2;
+            while (i >= 0 && input[i] == '\\') {
+                bslash_count++;
+                i--;
+            }
+            if (bslash_count % 2 == 0) {
+                return 1;
+            }
+        }
+
+        /* 2. Trailing backslash: cmd \ */
         size_t bslash_count = 0;
         ssize_t i = (ssize_t)len - 1;
         while (i >= 0 && input[i] == '\\') {

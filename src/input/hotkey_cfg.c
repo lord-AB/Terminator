@@ -284,21 +284,38 @@ int hotkey_cfg_load(HotkeyConfig *cfg, const char *path, char *err_msg, size_t e
 HotkeyAction hotkey_cfg_match(const HotkeyConfig *cfg, KeySym keysym, unsigned int state) {
     if (!cfg || keysym == NoSymbol) return HOTKEY_ACTION_NONE;
 
-    unsigned int clean_mods = state & (ControlMask | ShiftMask | Mod1Mask | Mod4Mask);
+    unsigned int clean_mods = state & (ControlMask | ShiftMask | Mod1Mask | Mod4Mask | Mod2Mask);
+    /* On macOS XQuartz, Mod2 is often Command/Super; normalize Mod2 to Mod4 */
+    if (clean_mods & Mod2Mask) {
+        clean_mods &= ~Mod2Mask;
+        clean_mods |= Mod4Mask;
+    }
+
     KeySym norm_ks = normalize_keysym(keysym);
 
     for (int a = 1; a < HOTKEY_ACTION_COUNT; a++) {
         if (cfg->bindings[a].modifiers == clean_mods) {
             if (normalize_keysym(cfg->bindings[a].keysym) == norm_ks) {
+                TERM_LOG("hotkey_cfg_match: matched action '%s' for keysym 0x%lx",
+                         cfg->bindings[a].name, (unsigned long)keysym);
                 return cfg->bindings[a].action;
             }
         }
     }
 
-    /* macOS Convenience Fallback: support native Cmd+C and Cmd+V for copy/paste */
-    if (clean_mods == Mod4Mask) {
+    /* macOS Convenience Fallback: support native Cmd (Mod4Mask or Mod2Mask) for standard actions */
+    int is_cmd = (state & (Mod4Mask | Mod2Mask)) != 0;
+    if (is_cmd) {
         if (norm_ks == 'c' || norm_ks == XK_c) return HOTKEY_ACTION_COPY;
         if (norm_ks == 'v' || norm_ks == XK_v) return HOTKEY_ACTION_PASTE;
+        if (norm_ks == 'a' || norm_ks == XK_a) return HOTKEY_ACTION_MOVE_HOME;
+        if (norm_ks == 'e' || norm_ks == XK_e) return HOTKEY_ACTION_MOVE_END;
+        if (norm_ks == 'u' || norm_ks == XK_u) return HOTKEY_ACTION_DELETE_TO_START;
+        if (norm_ks == 'k' || norm_ks == XK_k) return HOTKEY_ACTION_DELETE_TO_END;
+        if (norm_ks == 'l' || norm_ks == XK_l) return HOTKEY_ACTION_CLEAR_SCREEN;
+        if (norm_ks == 'w' || norm_ks == XK_w) return HOTKEY_ACTION_DELETE_PREV_WORD;
+        if (norm_ks == 'r' || norm_ks == XK_r) return HOTKEY_ACTION_SEARCH_HISTORY;
+        if (norm_ks == 'd' || norm_ks == XK_d) return HOTKEY_ACTION_EXIT_OR_EOF;
     }
 
     return HOTKEY_ACTION_NONE;

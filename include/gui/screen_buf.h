@@ -16,7 +16,7 @@
 /* ------------------------------------------------------------------ */
 
 #define SCROLLBACK_MAX  2000   /* max lines kept in ring buffer       */
-#define LINE_MAXLEN      512   /* max characters per scrollback line   */
+#define LINE_MAXLEN     4096   /* max characters per scrollback line   */
 
 /* ------------------------------------------------------------------ */
 /*  ScreenBuf structure                                               */
@@ -25,6 +25,7 @@
 typedef struct ScreenBuf {
     /* ---- Scrollback ring buffer ---------------------------------- */
     char    lines[SCROLLBACK_MAX][LINE_MAXLEN];
+    char    line_wrapped[SCROLLBACK_MAX]; /* 1 if line continues into next slot */
     int     count;          /* lines currently stored (0..SCROLLBACK_MAX)  */
     int     head;           /* next write position in ring                 */
     int     total;          /* total lines ever added (monotonic counter)  */
@@ -83,6 +84,12 @@ void screen_buf_add_text(ScreenBuf *sb, const char *text);
  */
 const char *screen_buf_get_line(ScreenBuf *sb, int display_index);
 
+/*
+ * Retrieve whether a line is soft-wrapped into the next slot (did not end in '\n').
+ * Returns 1 if soft-wrapped, 0 otherwise.
+ */
+int screen_buf_get_line_wrapped(ScreenBuf *sb, int display_index);
+
 /* Return the number of lines currently available (min(total, SCROLLBACK_MAX)). */
 int screen_buf_visible_count(ScreenBuf *sb);
 
@@ -134,5 +141,13 @@ void screen_buf_scroll_reset(ScreenBuf *sb);
 
 /* Reset scrollback but preserve the current input line and prompt. */
 void screen_buf_clear(ScreenBuf *sb);
+
+/* ------------------------------------------------------------------ */
+/*  Prompt helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+const char *get_default_username(void);
+void        get_default_prompt(char *buf, size_t size);
+const char *get_default_prompt_str(void);
 
 #endif /* GUI_SCREEN_BUF_H */

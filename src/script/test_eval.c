@@ -3,6 +3,7 @@
  */
 #include "script/test_eval.h"
 #include "exec/redirect.h"
+#include "parser/subst.h"
 #include "parser/expand.h"
 #include "parser/lexer.h"
 
@@ -147,9 +148,16 @@ int test_eval_expression(ShellContext *ctx, const char *raw_expr) {
         buf[--len] = '\0';
     }
 
-    /* 1. Expand variables in the expression ($1, $VAR, etc.) */
+    /* 1. Command substitution $(...) and `...` */
+    char subst_buf[MAX_CMD_LEN];
+    if (subst_expand(ctx, buf, subst_buf, sizeof(subst_buf)) < 0) {
+        strncpy(subst_buf, buf, sizeof(subst_buf) - 1);
+        subst_buf[sizeof(subst_buf) - 1] = '\0';
+    }
+
+    /* 2. Expand variables in the expression ($1, $VAR, etc.) */
     char expanded[MAX_CMD_LEN];
-    if (expand_variables(ctx, buf, expanded, sizeof(expanded)) < 0) {
+    if (expand_variables(ctx, subst_buf, expanded, sizeof(expanded)) < 0) {
         return 1;
     }
 

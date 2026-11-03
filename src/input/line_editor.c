@@ -83,6 +83,7 @@ void line_editor_clear_screen(ScreenBuf *sb) {
 int line_editor_handle_action(GuiState *gui, ScreenBuf *sb, HotkeyAction action) {
     if (!sb) return 0;
 
+    TERM_LOG("line_editor: handling action %d", action);
     switch (action) {
     case HOTKEY_ACTION_MOVE_LEFT:
         line_editor_move_left(sb);
@@ -128,8 +129,12 @@ int line_editor_handle_action(GuiState *gui, ScreenBuf *sb, HotkeyAction action)
 
     case HOTKEY_ACTION_COPY:
         if (gui) {
-            /* Copy entire line if no active selection */
-            clipboard_copy(gui, sb->input, sb->input_len);
+            if (gui->has_selection) {
+                gui_copy_selection(gui);
+            } else {
+                /* Copy entire line if no active selection */
+                clipboard_copy(gui, sb->input, sb->input_len);
+            }
         }
         return 1;
 
@@ -188,7 +193,9 @@ int line_editor_handle_action(GuiState *gui, ScreenBuf *sb, HotkeyAction action)
             sb->in_search = 1;
             strncpy(sb->saved_prompt, sb->prompt, sizeof(sb->saved_prompt) - 1);
             sb->saved_prompt[sizeof(sb->saved_prompt) - 1] = '\0';
-            screen_buf_set_prompt(sb, "Enter search term: ");
+            strncpy(sb->saved_input, sb->input, sizeof(sb->saved_input) - 1);
+            sb->saved_input[sizeof(sb->saved_input) - 1] = '\0';
+            screen_buf_set_prompt(sb, "(Ctrl+R) Enter search term: ");
             screen_buf_input_clear(sb);
         }
         return 1;

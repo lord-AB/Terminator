@@ -58,7 +58,8 @@ static void expand_globs(Command *cmd) {
 }
 
 int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int num_pids,
-                             const char *cmd_str, int capture_fd, int out_fd, int in_fd) {
+                             const char *cmd_str, int capture_fd, int out_fd, int in_fd,
+                             int stdin_fd) {
     if (!ctx || num_pids <= 0) return 0;
 
     int last_status = 0;
@@ -88,7 +89,7 @@ int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int nu
 
         poll(pfds, nfds, 50);
 
-        /* 1. Check for GUI signals (Ctrl+C, Ctrl+Z, Close) on in_fd */
+        /* 1. Check for GUI signals (Ctrl+C, Ctrl+Z, Close) or stdin lines on in_fd */
         if (in_idx >= 0 && (pfds[in_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
             uint32_t msg_type = 0, msg_len = 0;
             char in_buf[MAX_CMD_LEN];
@@ -108,6 +109,7 @@ int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int nu
                             waitpid(pids[i], &st, 0);
                         }
                         if (capture_fd >= 0) close(capture_fd);
+                        if (stdin_fd >= 0) close(stdin_fd);
                         ctx->last_status = 130;
                         return 130;
                     } else if (sig == SIGTSTP) {
@@ -122,6 +124,7 @@ int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int nu
                             j->state = JOB_STATE_STOPPED;
                             j->is_current = 1;
                         }
+                        if (j) j->stdin_fd = stdin_fd;
                         char stop_msg[MAX_CMD_LEN + 64];
                         snprintf(stop_msg, sizeof(stop_msg), "^Z\n[%d]+  Stopped                 %s\n",
                                  j ? j->job_id : 1, cmd_str);
@@ -131,10 +134,27 @@ int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int nu
                         ctx->last_status = 148;
                         return 148;
                     }
+                } else if (msg_type == GUI_MSG_LINE) {
+                    /* Forward interactive line to command stdin */
+                    if (stdin_fd >= 0) {
+                        if (msg_len > 0) {
+                            ssize_t w1 = write(stdin_fd, in_buf, msg_len);
+                            (void)w1;
+                        }
+                        ssize_t w2 = write(stdin_fd, "\n", 1);
+                        (void)w2;
+                    }
+                } else if (msg_type == GUI_MSG_EOF) {
+                    /* Ctrl+D -> signal EOF to command stdin */
+                    if (stdin_fd >= 0) {
+                        close(stdin_fd);
+                        stdin_fd = -1;
+                    }
                 } else if (msg_type == GUI_MSG_CLOSE) {
                     kill(-pgid, SIGHUP);
                     kill(-pgid, SIGKILL);
                     if (capture_fd >= 0) close(capture_fd);
+                    if (stdin_fd >= 0) close(stdin_fd);
                     return 1;
                 }
             }
@@ -163,21 +183,28 @@ int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int nu
                 any_running = 1;
             } else if (r > 0) {
                 if (WIFSTOPPED(status)) {
-                    Job *j = jobs_find_by_pgid(ctx->jobs, pgid);
-                    if (!j) {
-                        j = jobs_add(ctx->jobs, pgid, pids, num_pids, cmd_str, JOB_STATE_STOPPED, capture_fd);
-                    } else {
-                        j->state = JOB_STATE_STOPPED;
-                        j->is_current = 1;
+                    int sig = WSTOPSIG(status);
+                    if (sig == SIGTSTP || sig == SIGSTOP) {
+                        Job *j = jobs_find_by_pgid(ctx->jobs, pgid);
+                        if (!j) {
+                            j = jobs_add(ctx->jobs, pgid, pids, num_pids, cmd_str, JOB_STATE_STOPPED, capture_fd);
+                        } else {
+                            j->state = JOB_STATE_STOPPED;
+                            j->is_current = 1;
+                        }
+                        if (j) j->stdin_fd = stdin_fd;
+                        char stop_msg[MAX_CMD_LEN + 64];
+                        snprintf(stop_msg, sizeof(stop_msg), "^Z\n[%d]+  Stopped                 %s\n",
+                                 j ? j->job_id : 1, cmd_str);
+                        if (out_fd >= 0) {
+                            proto_send(out_fd, TAB_MSG_OUTPUT, stop_msg, (uint32_t)strlen(stop_msg));
+                        }
+                        ctx->last_status = 128 + sig;
+                        return ctx->last_status;
                     }
-                    char stop_msg[MAX_CMD_LEN + 64];
-                    snprintf(stop_msg, sizeof(stop_msg), "^Z\n[%d]+  Stopped                 %s\n",
-                             j ? j->job_id : 1, cmd_str);
-                    if (out_fd >= 0) {
-                        proto_send(out_fd, TAB_MSG_OUTPUT, stop_msg, (uint32_t)strlen(stop_msg));
-                    }
-                    ctx->last_status = 128 + WSTOPSIG(status);
-                    return ctx->last_status;
+                    /* For involuntary SIGTTIN/SIGTTOU, resume rather than claiming ^Z */
+                    kill(pids[i], SIGCONT);
+                    any_running = 1;
                 }
                 if (i == num_pids - 1) {
                     if (WIFEXITED(status)) last_status = WEXITSTATUS(status);
@@ -187,6 +214,10 @@ int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int nu
         }
 
         if (!any_running) {
+            if (stdin_fd >= 0) {
+                close(stdin_fd);
+                stdin_fd = -1;
+            }
             /* Drain any remaining output from capture_fd */
             if (capture_fd >= 0) {
                 ssize_t n;
@@ -202,6 +233,8 @@ int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int nu
     }
 
     ctx->last_status = last_status;
+    TERM_LOG("tab[%d]: foreground command '%s' completed with status %d",
+             ctx ? ctx->tab_id : 0, cmd_str ? cmd_str : "", last_status);
     return last_status;
 }
 
@@ -209,6 +242,15 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
     if (!ctx || !pl || pl->num_commands <= 0) return 0;
 
     int N = pl->num_commands;
+
+    /* Stdin pipe for interactive input to child 0 if foreground and no infile */
+    int stdin_pipe[2] = {-1, -1};
+    if (!pl->is_background && pl->commands[0].infile == NULL) {
+        if (pipe(stdin_pipe) < 0) {
+            stdin_pipe[0] = -1;
+            stdin_pipe[1] = -1;
+        }
+    }
 
     /* Allocate N - 1 inter-command pipes */
     int pipes[MAX_COMMANDS_IN_PIPELINE][2];
@@ -221,6 +263,7 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
                 close(pipes[j][0]);
                 close(pipes[j][1]);
             }
+            if (stdin_pipe[0] >= 0) { close(stdin_pipe[0]); close(stdin_pipe[1]); }
             ctx->last_status = 1;
             return 1;
         }
@@ -236,6 +279,7 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
             close(pipes[j][0]);
             close(pipes[j][1]);
         }
+        if (stdin_pipe[0] >= 0) { close(stdin_pipe[0]); close(stdin_pipe[1]); }
         ctx->last_status = 1;
         return 1;
     }
@@ -258,6 +302,7 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
     /* Fork N children into a single process group */
     pid_t pids[MAX_COMMANDS_IN_PIPELINE];
     pid_t pgid = 0;
+    TERM_LOG("tab[%d]: pipeline_exec '%s' (N=%d, bg=%d)", ctx ? ctx->tab_id : 0, pl->cmd_str, N, pl->is_background);
     for (int i = 0; i < N; i++) {
         pids[i] = fork();
         if (pids[i] < 0) {
@@ -270,6 +315,7 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
             }
             close(capture_pipe[0]);
             close(capture_pipe[1]);
+            if (stdin_pipe[0] >= 0) { close(stdin_pipe[0]); close(stdin_pipe[1]); }
             ctx->last_status = 1;
             return 1;
         }
@@ -282,9 +328,21 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
                 setpgid(0, pgid);
             }
 
-            /* 1. Wire stdin: if i > 0, read from previous pipe */
+            /* 1. Wire stdin:
+             *    - If i > 0, read from previous pipe
+             *    - If i == 0 and stdin_pipe exists, read from stdin_pipe
+             *    - If i == 0 and background with no input redir, read from /dev/null
+             */
             if (i > 0) {
                 dup2(pipes[i - 1][0], STDIN_FILENO);
+            } else if (stdin_pipe[0] >= 0) {
+                dup2(stdin_pipe[0], STDIN_FILENO);
+            } else if (pl->is_background && pl->commands[0].infile == NULL) {
+                int null_fd = open("/dev/null", O_RDONLY);
+                if (null_fd >= 0) {
+                    dup2(null_fd, STDIN_FILENO);
+                    close(null_fd);
+                }
             }
 
             /* 2. Wire stdout: if i < N - 1, write to next pipe; else write to capture pipe */
@@ -317,6 +375,8 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
             }
             close(capture_pipe[0]);
             close(capture_pipe[1]);
+            if (stdin_pipe[0] >= 0) close(stdin_pipe[0]);
+            if (stdin_pipe[1] >= 0) close(stdin_pipe[1]);
 
             /* If command segment has no argv (e.g. only redirection) */
             if (pl->commands[i].argc == 0 || !pl->commands[i].argv[0]) {
@@ -374,11 +434,19 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
         close(pipes[j][1]);
     }
 
-    /* 2. Close capture pipe write end in parent */
+    /* 2. Close capture pipe write end and child stdin read end in parent */
     close(capture_pipe[1]);
+    if (stdin_pipe[0] >= 0) {
+        close(stdin_pipe[0]);
+        stdin_pipe[0] = -1;
+    }
 
     /* 3. If background job (cmd &): add to job table, print [job_id] <pgid>, return without waiting */
     if (pl->is_background) {
+        if (stdin_pipe[1] >= 0) {
+            close(stdin_pipe[1]);
+            stdin_pipe[1] = -1;
+        }
         Job *j = jobs_add(ctx->jobs, pgid, pids, N, pl->cmd_str, JOB_STATE_RUNNING, capture_pipe[0]);
         char bg_msg[64];
         snprintf(bg_msg, sizeof(bg_msg), "[%d] %d\n", j ? j->job_id : 1, (int)pgid);
@@ -389,8 +457,8 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd) {
         return 0;
     }
 
-    /* 4. Foreground execution: wait, stream output, and multiplex signals */
-    return pipeline_wait_foreground(ctx, pgid, pids, N, pl->cmd_str, capture_pipe[0], out_fd, ctx->in_fd);
+    /* 4. Foreground execution: wait, stream output, and multiplex signals/stdin */
+    return pipeline_wait_foreground(ctx, pgid, pids, N, pl->cmd_str, capture_pipe[0], out_fd, ctx->in_fd, stdin_pipe[1]);
 }
 
 int pipeline_exec_pipeline_raw(ShellContext *ctx, Pipeline *pl) {

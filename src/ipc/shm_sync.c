@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include "ipc/shm_sync.h"
 
 /* ── Create and initialize shared state ─────────────────────────────── */
@@ -140,10 +141,29 @@ int shm_unlock(SharedState *state) {
 
 /* ── Add a command to history ───────────────────────────────────────── */
 void shm_history_add(SharedState *state, const char *cmd) {
-    if (!cmd || cmd[0] == '\0')
+    if (!state || !cmd || cmd[0] == '\0')
         return;
 
+    /* Do not add commands that start with whitespace or are all whitespace */
+    const char *check = cmd;
+    while (*check && isspace((unsigned char)*check)) {
+        check++;
+    }
+    if (*check == '\0' || isspace((unsigned char)cmd[0])) {
+        return;
+    }
+
     shm_lock(state);
+
+    /* Do not add consecutive duplicate commands */
+    if (state->count > 0) {
+        int last_slot = (state->head - 1 + HISTORY_CAPACITY) % HISTORY_CAPACITY;
+        if (state->entries[last_slot].valid &&
+            strcmp(state->entries[last_slot].cmd, cmd) == 0) {
+            shm_unlock(state);
+            return;
+        }
+    }
 
     /* Write to current head position */
     strncpy(state->entries[state->head].cmd, cmd, MAX_CMD_LEN - 1);

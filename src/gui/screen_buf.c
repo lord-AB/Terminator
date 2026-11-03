@@ -12,6 +12,33 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <pwd.h>
+#include <sys/types.h>
+
+static char s_default_prompt[128] = {0};
+
+const char *get_default_username(void) {
+    const char *u = getenv("USER");
+    if (!u || !*u) u = getenv("LOGNAME");
+    if (!u || !*u) u = getlogin();
+    if (!u || !*u) {
+        struct passwd *pw = getpwuid(getuid());
+        if (pw && pw->pw_name) u = pw->pw_name;
+    }
+    return (u && *u) ? u : "user";
+}
+
+const char *get_default_prompt_str(void) {
+    if (s_default_prompt[0] == '\0') {
+        snprintf(s_default_prompt, sizeof(s_default_prompt), "%s@terminator> ", get_default_username());
+    }
+    return s_default_prompt;
+}
+
+void get_default_prompt(char *buf, size_t size) {
+    if (!buf || size == 0) return;
+    snprintf(buf, size, "%s", get_default_prompt_str());
+}
 
 /* ================================================================== */
 /*  Creation / Destruction                                            */
@@ -28,9 +55,8 @@ ScreenBuf *screen_buf_create(void)
     if (!sb)
         return NULL;
 
-    /* Default prompt */
-    strncpy(sb->prompt, "user@terminator> ", sizeof(sb->prompt) - 1);
-    sb->prompt[sizeof(sb->prompt) - 1] = '\0';
+    /* Default prompt with actual logged in user */
+    get_default_prompt(sb->prompt, sizeof(sb->prompt));
 
     sb->history_idx = -1;
     sb->in_multiline = 0;
@@ -60,29 +86,40 @@ void screen_buf_destroy(ScreenBuf *sb)
 /*
  * screen_buf_add_line — append a single line to the scrollback ring buffer.
  *
- * The line is copied into lines[head].  head advances, count is capped at
- * SCROLLBACK_MAX, and total is incremented monotonically.
+ * If the line exceeds LINE_MAXLEN - 1, it is wrapped/chunked across multiple
+ * slots so no data is truncated, with line_wrapped marked appropriately.
  */
 void screen_buf_add_line(ScreenBuf *sb, const char *line)
 {
     if (!sb || !line)
         return;
 
-    strncpy(sb->lines[sb->head], line, LINE_MAXLEN - 1);
-    sb->lines[sb->head][LINE_MAXLEN - 1] = '\0';
+    size_t len = strlen(line);
+    const char *p = line;
+    do {
+        size_t chunk = (len >= LINE_MAXLEN) ? LINE_MAXLEN - 1 : len;
+        memcpy(sb->lines[sb->head], p, chunk);
+        sb->lines[sb->head][chunk] = '\0';
 
-    sb->head = (sb->head + 1) % SCROLLBACK_MAX;
+        p += chunk;
+        len -= chunk;
 
-    if (sb->count < SCROLLBACK_MAX)
-        sb->count++;
+        sb->line_wrapped[sb->head] = (len > 0) ? 1 : 0;
 
-    sb->total++;
+        sb->head = (sb->head + 1) % SCROLLBACK_MAX;
+
+        if (sb->count < SCROLLBACK_MAX)
+            sb->count++;
+
+        sb->total++;
+    } while (len > 0);
 }
 
 /*
  * screen_buf_add_text — split text by '\n' and add each piece as a
- *                       separate line.  A trailing fragment without a
- *                       newline is still added.
+ *                       separate line. Lines exceeding LINE_MAXLEN - 1
+ *                       are chunked so no characters are lost.
+ *                       Soft wrapping across chunks is preserved.
  */
 void screen_buf_add_text(ScreenBuf *sb, const char *text)
 {
@@ -91,30 +128,77 @@ void screen_buf_add_text(ScreenBuf *sb, const char *text)
 
     const char *p = text;
 
+    /* If the previous line was soft-wrapped (didn't end with '\n'),
+     * append into that slot first if there is space. */
+    if (sb->total > 0) {
+        int last_slot = (sb->head - 1 + SCROLLBACK_MAX) % SCROLLBACK_MAX;
+        if (sb->line_wrapped[last_slot]) {
+            size_t cur_len = strlen(sb->lines[last_slot]);
+            const char *nl = strchr(p, '\n');
+            size_t take = nl ? (size_t)(nl - p) : strlen(p);
+            size_t avail = (cur_len < (size_t)(LINE_MAXLEN - 1)) ? (size_t)(LINE_MAXLEN - 1) - cur_len : 0;
+
+            if (avail > 0) {
+                if (take > avail) take = avail;
+                memcpy(&sb->lines[last_slot][cur_len], p, take);
+                sb->lines[last_slot][cur_len + take] = '\0';
+                p += take;
+
+                if (nl && p == nl) {
+                    /* Hit newline: close out this line! */
+                    sb->line_wrapped[last_slot] = 0;
+                    p++; /* skip '\n' */
+                }
+            }
+        }
+    }
+
     while (*p) {
         /* Find the next newline (or end-of-string). */
         const char *nl = strchr(p, '\n');
 
         if (nl) {
-            /* Temporary buffer for the segment before '\n'. */
             size_t len = (size_t)(nl - p);
-            if (len >= LINE_MAXLEN)
-                len = LINE_MAXLEN - 1;
+            do {
+                size_t chunk = (len >= LINE_MAXLEN) ? LINE_MAXLEN - 1 : len;
 
-            /* Direct copy into destination ring slot (zero-copy) */
-            char *dest = sb->lines[sb->head];
-            memcpy(dest, p, len);
-            dest[len] = '\0';
+                /* Direct copy into destination ring slot */
+                char *dest = sb->lines[sb->head];
+                memcpy(dest, p, chunk);
+                dest[chunk] = '\0';
 
-            sb->head = (sb->head + 1) % SCROLLBACK_MAX;
-            if (sb->count < SCROLLBACK_MAX)
-                sb->count++;
-            sb->total++;
+                p += chunk;
+                len -= chunk;
+
+                sb->line_wrapped[sb->head] = (len > 0) ? 1 : 0;
+
+                sb->head = (sb->head + 1) % SCROLLBACK_MAX;
+                if (sb->count < SCROLLBACK_MAX)
+                    sb->count++;
+                sb->total++;
+            } while (len > 0);
 
             p = nl + 1;   /* skip past the newline */
         } else {
-            /* No more newlines — add the remaining text as-is. */
-            screen_buf_add_line(sb, p);
+            /* No more newlines — add the remaining text chunked as-is, marked wrapped */
+            size_t len = strlen(p);
+            while (len > 0) {
+                size_t chunk = (len >= LINE_MAXLEN) ? LINE_MAXLEN - 1 : len;
+
+                char *dest = sb->lines[sb->head];
+                memcpy(dest, p, chunk);
+                dest[chunk] = '\0';
+
+                p += chunk;
+                len -= chunk;
+
+                sb->line_wrapped[sb->head] = 1;
+
+                sb->head = (sb->head + 1) % SCROLLBACK_MAX;
+                if (sb->count < SCROLLBACK_MAX)
+                    sb->count++;
+                sb->total++;
+            }
             break;
         }
     }
@@ -148,6 +232,30 @@ const char *screen_buf_get_line(ScreenBuf *sb, int display_index)
     }
 
     return sb->lines[slot];
+}
+
+/*
+ * screen_buf_get_line_wrapped — retrieve whether line at display_index
+ *                               continues into the next slot without '\n'.
+ */
+int screen_buf_get_line_wrapped(ScreenBuf *sb, int display_index)
+{
+    if (!sb)
+        return 0;
+
+    int visible = (sb->total < SCROLLBACK_MAX) ? sb->total : SCROLLBACK_MAX;
+
+    if (display_index < 0 || display_index >= visible)
+        return 0;
+
+    int slot;
+    if (sb->total <= SCROLLBACK_MAX) {
+        slot = display_index;
+    } else {
+        slot = (sb->head + display_index) % SCROLLBACK_MAX;
+    }
+
+    return sb->line_wrapped[slot];
 }
 
 /*
@@ -293,19 +401,43 @@ void screen_buf_input_replace_range(ScreenBuf *sb, int start, int len, const cha
  * screen_buf_input_commit — build "prompt + input", add that combined
  *                           string to scrollback, then clear the input.
  *                           The prompt string itself is NOT reset.
+ *                           If input contains newlines, splits each line
+ *                           with prompt for first line and '> ' for rest.
  */
 void screen_buf_input_commit(ScreenBuf *sb)
 {
     if (!sb)
         return;
 
-    /* Build the combined line:  prompt + input.
-     * Both prompt (256) and input (4096) fit comfortably in a local buf.
-     * The scrollback line will be truncated to LINE_MAXLEN by add_line. */
-    char combined[256 + MAX_CMD_LEN];
-    snprintf(combined, sizeof(combined), "%s%s", sb->prompt, sb->input);
+    if (!strchr(sb->input, '\n')) {
+        char combined[256 + MAX_CMD_LEN];
+        snprintf(combined, sizeof(combined), "%s%s", sb->prompt, sb->input);
+        screen_buf_add_line(sb, combined);
+    } else {
+        /* Multiline input: split across newlines */
+        char copy[MAX_CMD_LEN];
+        strncpy(copy, sb->input, sizeof(copy) - 1);
+        copy[sizeof(copy) - 1] = '\0';
 
-    screen_buf_add_line(sb, combined);
+        char *line = copy;
+        int is_first = 1;
+        while (line) {
+            char *next = strchr(line, '\n');
+            if (next) {
+                *next = '\0';
+                next++;
+            }
+            char combined[256 + MAX_CMD_LEN];
+            if (is_first) {
+                snprintf(combined, sizeof(combined), "%s%s", sb->prompt, line);
+                is_first = 0;
+            } else {
+                snprintf(combined, sizeof(combined), "> %s", line);
+            }
+            screen_buf_add_line(sb, combined);
+            line = next;
+        }
+    }
     screen_buf_input_clear(sb);
 }
 
@@ -399,6 +531,8 @@ void screen_buf_clear(ScreenBuf *sb)
     if (!sb)
         return;
 
+    memset(sb->lines, 0, sizeof(sb->lines));
+    memset(sb->line_wrapped, 0, sizeof(sb->line_wrapped));
     sb->count         = 0;
     sb->head          = 0;
     sb->total         = 0;

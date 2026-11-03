@@ -20,7 +20,8 @@ typedef enum {
     GUI_MSG_PASTE,          /* pasted text block                        */
     GUI_MSG_SIGNAL,         /* deliver a signal (Ctrl+C → SIGINT, etc.) */
     GUI_MSG_CLOSE,          /* request tab to shut down                 */
-    GUI_MSG_RESIZE          /* terminal dimensions changed              */
+    GUI_MSG_RESIZE,         /* terminal dimensions changed              */
+    GUI_MSG_EOF             /* Ctrl+D / end of file on stdin            */
 } GuiToTabType;
 
 /* ── Tab → GUI message types ────────────────────────────────────────── */

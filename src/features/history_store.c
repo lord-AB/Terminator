@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <ctype.h>
 #include <errno.h>
 
 int history_store_get_path(char *path_out, size_t max_len) {
@@ -80,8 +81,21 @@ int history_store_load(SharedState *shm, const char *optional_path) {
                 }
             }
             unesc[u] = '\0';
+
+            /* Skip blank / whitespace-only commands from file */
+            const char *chk = unesc;
+            while (*chk && isspace((unsigned char)*chk)) {
+                chk++;
+            }
+            if (*chk == '\0') {
+                continue;
+            }
+
+            int prev_count = shm_history_count(shm);
             shm_history_add(shm, unesc);
-            count++;
+            if (shm_history_count(shm) > prev_count) {
+                count++;
+            }
             if (count >= HISTORY_CAPACITY) {
                 break;
             }
@@ -139,8 +153,21 @@ int history_store_save(SharedState *shm, const char *optional_path) {
 int history_store_append(SharedState *shm, const char *cmd, const char *optional_path) {
     if (!shm || !cmd || cmd[0] == '\0') return -1;
 
-    /* Add to in-memory shared history */
+    /* Do not store commands that start with whitespace or are all whitespace */
+    const char *check = cmd;
+    while (*check && isspace((unsigned char)*check)) {
+        check++;
+    }
+    if (*check == '\0' || isspace((unsigned char)cmd[0])) {
+        return 0;
+    }
+
+    /* Add to in-memory shared history (returns without adding if duplicate) */
+    int prev_count = shm_history_count(shm);
     shm_history_add(shm, cmd);
+    if (shm_history_count(shm) == prev_count) {
+        return 0; /* Not added (e.g. consecutive duplicate) */
+    }
 
     char file_path[MAX_PATH_LEN];
     if (optional_path && optional_path[0] != '\0') {

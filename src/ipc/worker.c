@@ -12,6 +12,7 @@
 #include <sys/wait.h>
 #include <pthread.h>
 #include <signal.h>
+#include <ctype.h>
 #include "ipc/worker.h"
 #include "ipc/protocol.h"
 #include "exec/shell_ctx.h"
@@ -93,10 +94,20 @@ void *worker_entry(void *arg) {
             /* Reap and report any completed background jobs */
             jobs_check_status(ctx->jobs, write_fd);
 
-            /* Skip empty lines */
+            /* Skip empty or whitespace-only lines */
             if (msg_len == 0 || buf[0] == '\0') {
                 continue;
             }
+
+            const char *chk = buf;
+            while (*chk && isspace((unsigned char)*chk)) {
+                chk++;
+            }
+            if (*chk == '\0') {
+                continue;
+            }
+
+            TERM_LOG("tab[%d]: executing line '%s'", tab_id, buf);
 
             /* Record command in shared history and disk */
             history_store_append(shared, buf, NULL);
@@ -106,6 +117,7 @@ void *worker_entry(void *arg) {
             if (subst_expand(ctx, buf, subst_buf, sizeof(subst_buf)) < 0) {
                 const char *err = "terminator: substitution error\n";
                 proto_send(write_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+                proto_send(write_fd, TAB_MSG_READY, NULL, 0);
                 ctx->last_status = 1;
                 continue;
             }
@@ -115,6 +127,7 @@ void *worker_entry(void *arg) {
             if (expand_variables(ctx, subst_buf, expanded_buf, sizeof(expanded_buf)) < 0) {
                 const char *err = "terminator: expansion error\n";
                 proto_send(write_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+                proto_send(write_fd, TAB_MSG_READY, NULL, 0);
                 ctx->last_status = 1;
                 continue;
             }
@@ -124,6 +137,7 @@ void *worker_entry(void *arg) {
             int num_tokens = lexer_tokenize(expanded_buf, tokens, MAX_ARGS);
 
             if (num_tokens == 0) {
+                proto_send(write_fd, TAB_MSG_READY, NULL, 0);
                 continue;
             }
 
@@ -132,6 +146,7 @@ void *worker_entry(void *arg) {
             if (ast_parse(tokens, num_tokens, &pl) < 0) {
                 const char *err = "terminator: syntax error near unexpected token\n";
                 proto_send(write_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+                proto_send(write_fd, TAB_MSG_READY, NULL, 0);
                 ctx->last_status = 2;
                 lexer_free_tokens(tokens, num_tokens);
                 continue;
@@ -142,6 +157,7 @@ void *worker_entry(void *arg) {
 
             if (pl.num_commands == 0) {
                 pipeline_free(&pl);
+                proto_send(write_fd, TAB_MSG_READY, NULL, 0);
                 continue;
             }
 
@@ -171,6 +187,7 @@ void *worker_entry(void *arg) {
             }
 
             pipeline_free(&pl);
+            proto_send(write_fd, TAB_MSG_READY, NULL, 0);
         }
     }
 

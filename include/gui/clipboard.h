@@ -10,8 +10,10 @@
 
 struct GuiState; /* Forward declaration */
 
+#define CLIPBOARD_MAX 65536
+
 typedef struct {
-    char   text[MAX_CMD_LEN];
+    char   text[CLIPBOARD_MAX];
     size_t len;
     Atom   atom_clipboard;
     Atom   atom_utf8;

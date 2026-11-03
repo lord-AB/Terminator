@@ -82,11 +82,37 @@ typedef struct GuiState {
     ClipboardState clipboard;
     char           cfg_err_msg[1024];
 
+    /* Mouse text selection */
+    int          is_selecting;      /* 1 while dragging */
+    int          has_selection;     /* 1 if valid selection range */
+    int          sel_start_row;     /* row relative to visible content area */
+    int          sel_start_col;     /* column (0..term_cols) */
+    int          sel_end_row;
+    int          sel_end_col;
+
     /* Event loop control */
     int          running;
 } GuiState;
 
 /* ── Public API ─────────────────────────────────────────────────────── */
+
+#define MAX_DISPLAY_ROWS 256
+
+typedef struct {
+    char text[LINE_MAXLEN + 256];
+    int  len;
+    int  is_wrapped;    /* 1 if soft-wrapped to next visual row, 0 if ended with \n */
+    int  is_prompt;     /* count of prompt characters at start of text */
+    int  is_input;      /* 1 if part of editable input line */
+    int  logical_idx;   /* scrollback line index or -1 */
+    int  sub_row;       /* sub row index within logical line */
+} DisplayRow;
+
+int compute_display_rows(GuiState *gui, ScreenBuf *sb, DisplayRow *rows, int max_rows,
+                        int *out_cursor_vr, int *out_cursor_vc);
+
+void gui_copy_selection(GuiState *gui);
+void gui_clear_selection(GuiState *gui);
 
 /*
  * Initialize the GUI: open X11 display, create window, load font,

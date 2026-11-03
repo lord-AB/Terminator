@@ -27,7 +27,8 @@ int pipeline_exec_pipeline(ShellContext *ctx, Pipeline *pl, int out_fd);
  * Ctrl+C (SIGINT) and Ctrl+Z (SIGTSTP) from in_fd.
  */
 int pipeline_wait_foreground(ShellContext *ctx, pid_t pgid, pid_t pids[], int num_pids,
-                             const char *cmd_str, int capture_fd, int out_fd, int in_fd);
+                             const char *cmd_str, int capture_fd, int out_fd, int in_fd,
+                             int stdin_fd);
 
 /*
  * Executes a pipeline directly to current STDOUT/STDERR without IPC framing.

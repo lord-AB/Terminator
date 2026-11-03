@@ -27,6 +27,7 @@ typedef struct {
     char     cmd[MAX_CMD_LEN];          /* Command line string */
     JobState state;
     int      capture_fd;                /* Pipe capture read end */
+    int      stdin_fd;                  /* Stdin pipe write end (if any) */
     int      is_current;                /* 1 if current job (+) */
 } Job;
 
