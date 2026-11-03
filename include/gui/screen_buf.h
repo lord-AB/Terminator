@@ -93,6 +93,9 @@ int screen_buf_get_line_wrapped(ScreenBuf *sb, int display_index);
 /* Return the number of lines currently available (min(total, SCROLLBACK_MAX)). */
 int screen_buf_visible_count(ScreenBuf *sb);
 
+/* Calculate total visual display rows for the scrollback lines at given column width. */
+int screen_buf_count_vrows(ScreenBuf *sb, int cols);
+
 /* ------------------------------------------------------------------ */
 /*  Input line management                                             */
 /* ------------------------------------------------------------------ */

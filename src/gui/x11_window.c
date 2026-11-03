@@ -299,6 +299,43 @@ void gui_close_tab(GuiState *gui, int idx) {
 
 static DisplayRow s_display_rows[MAX_DISPLAY_ROWS];
 
+static int compute_autocomplete_lines(const ScreenBuf *sb, int max_cols, char lines[16][512], int lens[16]) {
+    if (!sb || !sb->autocomplete.in_select_mode || sb->autocomplete.num_matches <= 0) return 0;
+    if (max_cols < 20) max_cols = 20;
+
+    int cur_line = 0;
+    int cur_len = 0;
+    lines[0][0] = '\0';
+    lens[0] = 0;
+
+    for (int i = 0; i < sb->autocomplete.num_matches && cur_line < 16; i++) {
+        char item[256];
+        int n = snprintf(item, sizeof(item), "%d. %s", i + 1, sb->autocomplete.matches[i]);
+        if (n <= 0) continue;
+
+        if (cur_len > 0) {
+            if (cur_len + 3 + n <= max_cols) {
+                strcat(lines[cur_line], "   ");
+                strcat(lines[cur_line], item);
+                cur_len += 3 + n;
+                lens[cur_line] = cur_len;
+                continue;
+            } else {
+                cur_line++;
+                if (cur_line >= 16) break;
+                lines[cur_line][0] = '\0';
+                cur_len = 0;
+            }
+        }
+
+        strncpy(lines[cur_line], item, sizeof(lines[cur_line]) - 1);
+        lines[cur_line][sizeof(lines[cur_line]) - 1] = '\0';
+        cur_len = (int)strlen(lines[cur_line]);
+        lens[cur_line] = cur_len;
+    }
+    return cur_line + 1;
+}
+
 /*
  * compute_display_rows — dynamically wrap and lay out scrollback lines
  *                        and the active input line to the terminal width.
@@ -379,28 +416,21 @@ int compute_display_rows(GuiState *gui, ScreenBuf *sb, DisplayRow *rows, int max
     }
     if (in_vrows > total_rows) in_vrows = total_rows;
 
-    int has_autocomplete = (sb->autocomplete.in_select_mode && sb->autocomplete.menu_text[0] != '\0') ? 1 : 0;
+    /* 2. Format and wrap autocomplete suggestions across multiple visual rows */
+    char dummy_ac_lines[16][512];
+    int dummy_ac_lens[16];
+    int max_ac_cols = cols - 2;
+    int ac_vrows = compute_autocomplete_lines(sb, max_ac_cols, dummy_ac_lines, dummy_ac_lens);
+    int max_allowed_ac = total_rows - in_vrows - 1;
+    if (max_allowed_ac < 1) max_allowed_ac = 1;
+    if (ac_vrows > max_allowed_ac) ac_vrows = max_allowed_ac;
 
-    /* 2. Count total scrollback visual rows */
+    /* 3. Count total scrollback visual rows */
     int stored = screen_buf_visible_count(sb);
-    int total_sb_vrows = 0;
-    int idx = 0;
-    while (idx < stored) {
-        int total_chars = 0;
-        while (idx < stored) {
-            const char *l = screen_buf_get_line(sb, idx);
-            if (l) total_chars += (int)strlen(l);
-            int wrapped = screen_buf_get_line_wrapped(sb, idx);
-            idx++;
-            if (!wrapped) break;
-        }
-        int v = (total_chars + cols - 1) / cols;
-        if (v < 1) v = 1;
-        total_sb_vrows += v;
-    }
+    int total_sb_vrows = screen_buf_count_vrows(sb, cols);
 
-    /* 3. Determine visual rows allocated to scrollback */
-    int max_sb_rows = total_rows - in_vrows - has_autocomplete;
+    /* 4. Determine visual rows allocated to scrollback */
+    int max_sb_rows = total_rows - in_vrows - ac_vrows;
     if (max_sb_rows < 0) max_sb_rows = 0;
 
     int max_scroll = (total_sb_vrows > max_sb_rows) ? (total_sb_vrows - max_sb_rows) : 0;
@@ -418,14 +448,14 @@ int compute_display_rows(GuiState *gui, ScreenBuf *sb, DisplayRow *rows, int max
     } else {
         input_start_vr = end_vrow - start_vrow;
     }
-    if (input_start_vr + in_vrows > total_rows) {
-        input_start_vr = total_rows - in_vrows;
+    if (input_start_vr + in_vrows + ac_vrows > total_rows) {
+        input_start_vr = total_rows - in_vrows - ac_vrows;
     }
     if (input_start_vr < 0) input_start_vr = 0;
 
     /* 4. Populate scrollback visual rows */
     int cur_vrow = 0;
-    idx = 0;
+    int idx = 0;
     while (idx < stored) {
         int start_slot = idx;
         int end_slot = idx;
@@ -714,40 +744,51 @@ void gui_redraw(GuiState *gui) {
             }
         }
 
-        /* ── Autocomplete suggestions displayed directly under cursor ──── */
-        if (sb->autocomplete.in_select_mode && sb->autocomplete.menu_text[0] != '\0') {
-            int menu_len = (int)strlen(sb->autocomplete.menu_text);
-            int menu_w   = menu_len * gui->char_width + 8;
-            int cursor_x = x_margin + cur_vc * gui->char_width;
-            int cursor_y = bar_h + cur_vr * gui->char_height;
-            int menu_x   = cursor_x;
-            if (menu_x + menu_w > gui->win_width - x_margin) {
-                menu_x = gui->win_width - x_margin - menu_w;
+        /* ── Autocomplete suggestions displayed wrapped downwards ──── */
+        int ac_cols = gui->term_cols > 0 ? (gui->term_cols - 2) : 78;
+        char ac_lines[16][512];
+        int ac_line_lens[16];
+        int ac_vrows = compute_autocomplete_lines(sb, ac_cols, ac_lines, ac_line_lens);
+        if (ac_vrows > 0) {
+            int max_w_chars = 0;
+            for (int i = 0; i < ac_vrows; i++) {
+                if (ac_line_lens[i] > max_w_chars) {
+                    max_w_chars = ac_line_lens[i];
+                }
             }
-            if (menu_x < x_margin) {
-                menu_x = x_margin;
+            int box_w = max_w_chars * gui->char_width + 12;
+            if (box_w > gui->win_width - 2 * x_margin) {
+                box_w = gui->win_width - 2 * x_margin;
             }
 
-            int suggest_box_y = cursor_y + gui->char_height;
-            if (suggest_box_y + gui->char_height > gui->win_height) {
-                suggest_box_y = cursor_y - gui->char_height;
+            int box_x = x_margin;
+            int box_h = ac_vrows * gui->char_height + 4;
+            int cur_y = bar_h + cur_vr * gui->char_height;
+            int box_y = cur_y + gui->char_height;
+
+            if (box_y + box_h > gui->win_height) {
+                box_y = cur_y - box_h;
             }
-            int suggest_text_y = suggest_box_y + gui->font_ascent;
+            if (box_y < bar_h) {
+                box_y = bar_h;
+            }
 
             /* Background box with border */
             XSetForeground(dpy, gc, gui->color_tab_inactive);
-            XFillRectangle(dpy, buf, gc, menu_x, suggest_box_y,
-                           (unsigned)menu_w, (unsigned)gui->char_height);
+            XFillRectangle(dpy, buf, gc, box_x, box_y,
+                           (unsigned)box_w, (unsigned)box_h);
             XSetForeground(dpy, gc, gui->color_border);
-            XDrawRectangle(dpy, buf, gc, menu_x, suggest_box_y,
-                           (unsigned)menu_w, (unsigned)gui->char_height);
+            XDrawRectangle(dpy, buf, gc, box_x, box_y,
+                           (unsigned)box_w, (unsigned)box_h);
 
-            /* Text in prompt color */
-            int max_chars = (gui->win_width - menu_x - 8) / gui->char_width;
-            int draw_len  = (menu_len > max_chars && max_chars > 0) ? max_chars : menu_len;
+            /* Draw each suggestion line wrapped downwards */
             XSetForeground(dpy, gc, gui->color_prompt);
-            XDrawString(dpy, buf, gc, menu_x + 4, suggest_text_y,
-                        sb->autocomplete.menu_text, draw_len);
+            for (int i = 0; i < ac_vrows; i++) {
+                int line_y = box_y + 2 + i * gui->char_height + gui->font_ascent;
+                int max_c = (box_w - 8) / gui->char_width;
+                int dlen = (ac_line_lens[i] > max_c && max_c > 0) ? max_c : ac_line_lens[i];
+                XDrawString(dpy, buf, gc, box_x + 6, line_y, ac_lines[i], dlen);
+            }
         }
 
         /* If scrolled up, draw scroll indicator at top right */
@@ -802,9 +843,21 @@ static void handle_tab_output(GuiState *gui, int tab_idx) {
     if (!sb) return;
 
     switch (msg_type) {
-    case TAB_MSG_OUTPUT:
+    case TAB_MSG_OUTPUT: {
+        int cols = gui->term_cols > 0 ? gui->term_cols : 80;
+        int old_vrows = (sb->scroll_offset > 0) ? screen_buf_count_vrows(sb, cols) : 0;
+
         screen_buf_add_text(sb, payload);
+
+        if (sb->scroll_offset > 0) {
+            int new_vrows = screen_buf_count_vrows(sb, cols);
+            int diff = new_vrows - old_vrows;
+            if (diff > 0) {
+                sb->scroll_offset += diff;
+            }
+        }
         break;
+    }
     case TAB_MSG_PROMPT:
         screen_buf_set_prompt(sb, payload);
         break;
@@ -833,6 +886,17 @@ static void handle_tab_output(GuiState *gui, int tab_idx) {
     }
 }
 
+static void cancel_history_search(ScreenBuf *sb) {
+    if (!sb || !sb->in_search) return;
+    sb->in_search = 0;
+    screen_buf_set_prompt(sb, sb->saved_prompt[0] ? sb->saved_prompt : get_default_prompt_str());
+    screen_buf_input_clear(sb);
+    for (int i = 0; sb->saved_input[i]; i++) {
+        screen_buf_input_insert(sb, sb->saved_input[i]);
+    }
+    screen_buf_scroll_reset(sb);
+}
+
 /* ── Handle keyboard input ──────────────────────────────────────────── */
 static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
     char   buf[32];
@@ -852,6 +916,21 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
     TERM_LOG("keypress: keysym=0x%lx ('%s') state=0x%x ctrl=%d cmd=%d alt=%d shift=%d",
              (unsigned long)keysym, len > 0 ? buf : "", ev->state, ctrl, cmd, alt, shift);
 
+    /* If in Ctrl+R reverse history search mode, Esc or Ctrl+C / Ctrl+G cancels search immediately */
+    ScreenBuf *cur_sb = (gui->active_tab >= 0 && gui->tabs[gui->active_tab].in_use)
+                        ? gui->tabs[gui->active_tab].screen : NULL;
+    if (cur_sb && cur_sb->in_search) {
+        int is_cancel = (keysym == XK_Escape) ||
+                        (len == 1 && (buf[0] == 27 || buf[0] == 3 || buf[0] == 7)) ||
+                        (ctrl && (keysym == XK_c || keysym == XK_C || keysym == 3 ||
+                                  keysym == XK_g || keysym == XK_G || keysym == 7));
+        if (is_cancel) {
+            cancel_history_search(cur_sb);
+            gui_redraw(gui);
+            return;
+        }
+    }
+
     /* ── Cmd+W: close current tab ──────────────────────────────────── */
     if (cmd && (keysym == XK_w || keysym == XK_W)) {
         if (gui->active_tab >= 0 && gui->tabs[gui->active_tab].in_use) {
@@ -863,7 +942,7 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
     }
 
     /* ── Ctrl+C: cancel current line / multiline input or interrupt job ── */
-    if (ctrl && (keysym == XK_c || keysym == XK_C)) {
+    if ((ctrl && (keysym == XK_c || keysym == XK_C || keysym == 3)) || (len == 1 && buf[0] == 3)) {
         if (gui->active_tab >= 0 && gui->tabs[gui->active_tab].in_use) {
             ScreenBuf *sb = gui->tabs[gui->active_tab].screen;
             int fd = gui->tabs[gui->active_tab].worker.gui_write_fd;
@@ -986,6 +1065,11 @@ static void handle_keypress(GuiState *gui, XKeyEvent *ev) {
 
     switch (keysym) {
     case XK_Escape:
+        if (sb && sb->in_search) {
+            cancel_history_search(sb);
+            gui_redraw(gui);
+            return;
+        }
         if (gui->has_selection) {
             gui_clear_selection(gui);
             return;

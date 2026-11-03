@@ -153,47 +153,70 @@ int interpreter_exec_line(ShellContext *ctx, const char *line, int out_fd) {
     int num_tokens = lexer_tokenize(expanded_buf, tokens, MAX_ARGS);
     if (num_tokens <= 0) return 0;
 
-    /* 4. Parse AST */
-    Pipeline pl;
-    if (ast_parse(tokens, num_tokens, &pl) < 0) {
-        const char *err = "terminator: syntax error near unexpected token\n";
-        proto_send_text(out_fd, err);
-        ctx->last_status = 2;
-        lexer_free_tokens(tokens, num_tokens);
-        return 2;
-    }
-    lexer_free_tokens(tokens, num_tokens);
-    strncpy(pl.cmd_str, line, sizeof(pl.cmd_str) - 1);
-    pl.cmd_str[sizeof(pl.cmd_str) - 1] = '\0';
-
-    if (pl.num_commands == 0) {
-        pipeline_free(&pl);
-        return 0;
-    }
-
-    /* 5. Execute command / pipeline */
+    /* 4. Parse and execute commands chained with &&, ||, ; */
+    int seg_start = 0;
+    int should_execute = 1;
     int status = 0;
-    if (pl.num_commands == 1 && pl.commands[0].argc > 0) {
-        const char *first_cmd = pl.commands[0].argv[0];
-        if (builtins_is_builtin(first_cmd)) {
-            status = builtins_exec_cmd(ctx, &pl.commands[0], out_fd, NULL);
-        } else if ((strcmp(first_cmd, "bash") == 0 || strcmp(first_cmd, "sh") == 0) && pl.commands[0].argc >= 2) {
-            status = interpreter_run_file(ctx, pl.commands[0].argv[1],
-                                          pl.commands[0].argc - 1,
-                                          &pl.commands[0].argv[1], 0, out_fd);
-        } else if (interpreter_is_script(ctx, first_cmd)) {
-            status = interpreter_run_file(ctx, first_cmd,
-                                          pl.commands[0].argc,
-                                          pl.commands[0].argv, 0, out_fd);
-        } else {
-            status = pipeline_exec_pipeline(ctx, &pl, out_fd);
+
+    for (int i = 0; i <= num_tokens; i++) {
+        int is_delim = (i == num_tokens);
+        int next_chain = 0; /* 0: none, 1: &&, 2: ||, 3: ; */
+
+        if (!is_delim) {
+            if (strcmp(tokens[i], "&&") == 0)      { is_delim = 1; next_chain = 1; }
+            else if (strcmp(tokens[i], "||") == 0) { is_delim = 1; next_chain = 2; }
+            else if (strcmp(tokens[i], ";") == 0)  { is_delim = 1; next_chain = 3; }
         }
-    } else {
-        status = pipeline_exec_pipeline(ctx, &pl, out_fd);
+
+        if (is_delim) {
+            int seg_len = i - seg_start;
+            if (seg_len > 0 && should_execute) {
+                Pipeline pl;
+                if (ast_parse(&tokens[seg_start], seg_len, &pl) < 0) {
+                    const char *err = "terminator: syntax error near unexpected token\n";
+                    proto_send_text(out_fd, err);
+                    ctx->last_status = 2;
+                    status = 2;
+                    should_execute = 0;
+                } else {
+                    if (pl.num_commands > 0) {
+                        if (pl.num_commands == 1 && pl.commands[0].argc > 0) {
+                            const char *first_cmd = pl.commands[0].argv[0];
+                            if (builtins_is_builtin(first_cmd)) {
+                                status = builtins_exec_cmd(ctx, &pl.commands[0], out_fd, NULL);
+                            } else if ((strcmp(first_cmd, "bash") == 0 || strcmp(first_cmd, "sh") == 0) && pl.commands[0].argc >= 2) {
+                                status = interpreter_run_file(ctx, pl.commands[0].argv[1],
+                                                              pl.commands[0].argc - 1,
+                                                              &pl.commands[0].argv[1], 0, out_fd);
+                            } else if (interpreter_is_script(ctx, first_cmd)) {
+                                status = interpreter_run_file(ctx, first_cmd,
+                                                              pl.commands[0].argc,
+                                                              pl.commands[0].argv, 0, out_fd);
+                            } else {
+                                status = pipeline_exec_pipeline(ctx, &pl, out_fd);
+                            }
+                        } else {
+                            status = pipeline_exec_pipeline(ctx, &pl, out_fd);
+                        }
+                        ctx->last_status = status;
+                    }
+                    pipeline_free(&pl);
+                }
+            }
+
+            if (next_chain == 1) { /* && */
+                should_execute = (ctx->last_status == 0);
+            } else if (next_chain == 2) { /* || */
+                should_execute = (ctx->last_status != 0);
+            } else if (next_chain == 3) { /* ; */
+                should_execute = 1;
+            }
+
+            seg_start = i + 1;
+        }
     }
 
-    pipeline_free(&pl);
-    ctx->last_status = status;
+    lexer_free_tokens(tokens, num_tokens);
     return status;
 }
 

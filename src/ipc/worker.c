@@ -40,6 +40,34 @@ void worker_init(TabWorker *w) {
     w->shared       = NULL;
 }
 
+static int worker_exec_pipeline(ShellContext *ctx, Pipeline *pl, int write_fd, SharedState *shared) {
+    if (pl->num_commands == 1 && pl->commands[0].argc > 0 &&
+        builtins_is_builtin(pl->commands[0].argv[0])) {
+        int res = builtins_exec_cmd(ctx, &pl->commands[0], write_fd, shared);
+        ctx->last_status = (res == BUILTIN_SUCCESS ? 0 : (res == BUILTIN_EXIT ? BUILTIN_EXIT : 1));
+        return res;
+    } else if (pl->num_commands == 1 && pl->commands[0].argc > 0 &&
+               (strcmp(pl->commands[0].argv[0], "bash") == 0 || strcmp(pl->commands[0].argv[0], "sh") == 0) &&
+               pl->commands[0].argc >= 2) {
+        int res = interpreter_run_file(ctx, pl->commands[0].argv[1],
+                                       pl->commands[0].argc - 1,
+                                       &pl->commands[0].argv[1], 0, write_fd);
+        ctx->last_status = res;
+        return res;
+    } else if (pl->num_commands == 1 && pl->commands[0].argc > 0 &&
+               interpreter_is_script(ctx, pl->commands[0].argv[0])) {
+        int res = interpreter_run_file(ctx, pl->commands[0].argv[0],
+                                       pl->commands[0].argc,
+                                       pl->commands[0].argv, 0, write_fd);
+        ctx->last_status = res;
+        return res;
+    } else {
+        int res = pipeline_exec_pipeline(ctx, pl, write_fd);
+        ctx->last_status = res;
+        return res;
+    }
+}
+
 /* ── Tab worker shell loop ─────────────────────────────────────────── */
 void *worker_entry(void *arg) {
     WorkerArgs *wa = (WorkerArgs *)arg;
@@ -141,52 +169,62 @@ void *worker_entry(void *arg) {
                 continue;
             }
 
-            /* 4. Parse AST (redirections, pipeline segments, background flag) */
-            Pipeline pl;
-            if (ast_parse(tokens, num_tokens, &pl) < 0) {
-                const char *err = "terminator: syntax error near unexpected token\n";
-                proto_send(write_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
-                proto_send(write_fd, TAB_MSG_READY, NULL, 0);
-                ctx->last_status = 2;
-                lexer_free_tokens(tokens, num_tokens);
-                continue;
-            }
-            lexer_free_tokens(tokens, num_tokens);
-            strncpy(pl.cmd_str, buf, sizeof(pl.cmd_str) - 1);
-            pl.cmd_str[sizeof(pl.cmd_str) - 1] = '\0';
+            /* 4. Parse and execute commands chained with &&, ||, ; */
+            int seg_start = 0;
+            int should_execute = 1;
+            int had_exit = 0;
 
-            if (pl.num_commands == 0) {
-                pipeline_free(&pl);
-                proto_send(write_fd, TAB_MSG_READY, NULL, 0);
-                continue;
-            }
+            for (int i = 0; i <= num_tokens; i++) {
+                int is_delim = (i == num_tokens);
+                int next_chain = 0; /* 0: none, 1: &&, 2: ||, 3: ; */
 
-            /* Execute command / pipeline */
-            if (pl.num_commands == 1 && pl.commands[0].argc > 0 &&
-                builtins_is_builtin(pl.commands[0].argv[0])) {
-                int res = builtins_exec_cmd(ctx, &pl.commands[0], write_fd, shared);
-                if (res == BUILTIN_EXIT) {
-                    TERM_LOG("tab[%d]: exit built-in invoked, exiting", tab_id);
-                    pipeline_free(&pl);
-                    break;
+                if (!is_delim) {
+                    if (strcmp(tokens[i], "&&") == 0)      { is_delim = 1; next_chain = 1; }
+                    else if (strcmp(tokens[i], "||") == 0) { is_delim = 1; next_chain = 2; }
+                    else if (strcmp(tokens[i], ";") == 0)  { is_delim = 1; next_chain = 3; }
                 }
-            } else if (pl.num_commands == 1 && pl.commands[0].argc > 0 &&
-                       (strcmp(pl.commands[0].argv[0], "bash") == 0 || strcmp(pl.commands[0].argv[0], "sh") == 0) &&
-                       pl.commands[0].argc >= 2) {
-                interpreter_run_file(ctx, pl.commands[0].argv[1],
-                                     pl.commands[0].argc - 1,
-                                     &pl.commands[0].argv[1], 0, write_fd);
-            } else if (pl.num_commands == 1 && pl.commands[0].argc > 0 &&
-                       interpreter_is_script(ctx, pl.commands[0].argv[0])) {
-                interpreter_run_file(ctx, pl.commands[0].argv[0],
-                                     pl.commands[0].argc,
-                                     pl.commands[0].argv, 0, write_fd);
-            } else {
-                /* Execute pipeline (1 or more commands connected by pipes, with redirections) */
-                pipeline_exec_pipeline(ctx, &pl, write_fd);
+
+                if (is_delim) {
+                    int seg_len = i - seg_start;
+                    if (seg_len > 0 && should_execute) {
+                        Pipeline pl;
+                        if (ast_parse(&tokens[seg_start], seg_len, &pl) < 0) {
+                            const char *err = "terminator: syntax error near unexpected token\n";
+                            proto_send(write_fd, TAB_MSG_OUTPUT, err, (uint32_t)strlen(err));
+                            ctx->last_status = 2;
+                            should_execute = 0;
+                        } else {
+                            if (pl.num_commands > 0) {
+                                int res = worker_exec_pipeline(ctx, &pl, write_fd, shared);
+                                if (res == BUILTIN_EXIT) {
+                                    pipeline_free(&pl);
+                                    had_exit = 1;
+                                    break;
+                                }
+                            }
+                            pipeline_free(&pl);
+                        }
+                    }
+
+                    if (next_chain == 1) { /* && */
+                        should_execute = (ctx->last_status == 0);
+                    } else if (next_chain == 2) { /* || */
+                        should_execute = (ctx->last_status != 0);
+                    } else if (next_chain == 3) { /* ; */
+                        should_execute = 1;
+                    }
+
+                    seg_start = i + 1;
+                }
             }
 
-            pipeline_free(&pl);
+            lexer_free_tokens(tokens, num_tokens);
+
+            if (had_exit) {
+                TERM_LOG("tab[%d]: exit built-in invoked, exiting", tab_id);
+                break;
+            }
+
             proto_send(write_fd, TAB_MSG_READY, NULL, 0);
         }
     }

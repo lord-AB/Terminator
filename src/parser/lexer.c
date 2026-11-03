@@ -93,8 +93,8 @@ int lexer_tokenize(const char *input, char *tokens[], int max_tokens) {
             continue;
         }
 
-        /* 6. Shell operators: |, <, >, & */
-        if (c == '|' || c == '<' || c == '>' || c == '&') {
+        /* 6. Shell operators: |, <, >, &, ; */
+        if (c == '|' || c == '<' || c == '>' || c == '&' || c == ';') {
             /* Finish any pending word token */
             if (in_word) {
                 word[w_len] = '\0';
@@ -104,9 +104,15 @@ int lexer_tokenize(const char *input, char *tokens[], int max_tokens) {
                 if (count >= max_tokens - 1) break;
             }
 
-            /* Recognize '>>' */
+            /* Recognize multi-character operators: '>>', '&&', '||' */
             if (c == '>' && *(p + 1) == '>') {
                 tokens[count++] = strdup(">>");
+                p += 2;
+            } else if (c == '&' && *(p + 1) == '&') {
+                tokens[count++] = strdup("&&");
+                p += 2;
+            } else if (c == '|' && *(p + 1) == '|') {
+                tokens[count++] = strdup("||");
                 p += 2;
             } else {
                 char op_str[2] = { c, '\0' };

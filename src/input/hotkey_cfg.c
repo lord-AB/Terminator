@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static const struct {
     HotkeyAction action;
@@ -165,14 +167,36 @@ int hotkey_cfg_load(HotkeyConfig *cfg, const char *path, char *err_msg, size_t e
     /* Always start with defaults */
     hotkey_cfg_init_defaults(cfg);
 
-    char filepath[MAX_PATH_LEN];
+    char filepath[MAX_PATH_LEN] = {0};
     if (path && path[0]) {
         strncpy(filepath, path, sizeof(filepath) - 1);
         filepath[sizeof(filepath) - 1] = '\0';
     } else {
         const char *home = getenv("HOME");
-        if (!home) home = ".";
-        snprintf(filepath, sizeof(filepath), "%s/.terminatorrc", home);
+        char home_rc[MAX_PATH_LEN] = {0};
+        if (home && home[0]) {
+            snprintf(home_rc, sizeof(home_rc), "%s/.terminatorrc", home);
+        }
+
+        /* Check candidate locations in priority order:
+         * 1. ~/.terminatorrc
+         * 2. ./terminatorrc
+         * 3. ./.terminatorrc
+         */
+        if (home_rc[0] && access(home_rc, R_OK) == 0) {
+            strncpy(filepath, home_rc, sizeof(filepath) - 1);
+        } else if (access("./terminatorrc", R_OK) == 0) {
+            strncpy(filepath, "./terminatorrc", sizeof(filepath) - 1);
+        } else if (access("./.terminatorrc", R_OK) == 0) {
+            strncpy(filepath, "./.terminatorrc", sizeof(filepath) - 1);
+        } else {
+            /* Default fallback to ~/.terminatorrc */
+            if (home_rc[0]) {
+                strncpy(filepath, home_rc, sizeof(filepath) - 1);
+            } else {
+                strncpy(filepath, ".terminatorrc", sizeof(filepath) - 1);
+            }
+        }
     }
 
     strncpy(cfg->config_path, filepath, sizeof(cfg->config_path) - 1);
@@ -284,17 +308,26 @@ int hotkey_cfg_load(HotkeyConfig *cfg, const char *path, char *err_msg, size_t e
 HotkeyAction hotkey_cfg_match(const HotkeyConfig *cfg, KeySym keysym, unsigned int state) {
     if (!cfg || keysym == NoSymbol) return HOTKEY_ACTION_NONE;
 
-    unsigned int clean_mods = state & (ControlMask | ShiftMask | Mod1Mask | Mod4Mask | Mod2Mask);
-    /* On macOS XQuartz, Mod2 is often Command/Super; normalize Mod2 to Mod4 */
-    if (clean_mods & Mod2Mask) {
-        clean_mods &= ~Mod2Mask;
-        clean_mods |= Mod4Mask;
-    }
+    int has_ctrl  = (state & ControlMask) != 0;
+    int has_shift = (state & ShiftMask) != 0;
+    int has_alt   = (state & Mod1Mask) != 0;
+    int has_cmd   = (state & Mod4Mask) != 0;
 
     KeySym norm_ks = normalize_keysym(keysym);
 
     for (int a = 1; a < HOTKEY_ACTION_COUNT; a++) {
-        if (cfg->bindings[a].modifiers == clean_mods) {
+        unsigned int bm = cfg->bindings[a].modifiers;
+        int req_ctrl  = (bm & ControlMask) != 0;
+        int req_shift = (bm & ShiftMask) != 0;
+        int req_alt   = (bm & Mod1Mask) != 0;
+        int req_cmd   = (bm & (Mod4Mask | Mod2Mask)) != 0;
+
+        int cmd_match = req_cmd ? (has_cmd || (state & Mod2Mask)) : !has_cmd;
+
+        if (has_ctrl == req_ctrl &&
+            has_shift == req_shift &&
+            has_alt == req_alt &&
+            cmd_match) {
             if (normalize_keysym(cfg->bindings[a].keysym) == norm_ks) {
                 TERM_LOG("hotkey_cfg_match: matched action '%s' for keysym 0x%lx",
                          cfg->bindings[a].name, (unsigned long)keysym);

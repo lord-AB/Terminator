@@ -471,28 +471,50 @@ int pipeline_exec_pipeline_raw(ShellContext *ctx, Pipeline *pl) {
     if (N == 1) {
         Command *cmd = &pl->commands[0];
 
-        /* Apply explicit redirections (< infile, > outfile, >> outfile) */
-        if (redirect_apply(ctx, cmd) < 0) {
-            _exit(1);
+        pid_t pid = fork();
+        if (pid < 0) {
+            fprintf(stderr, "terminator: fork failed: %s\n", strerror(errno));
+            fflush(stderr);
+            return 1;
         }
 
-        if (cmd->argc == 0 || !cmd->argv[0]) {
-            _exit(0);
+        if (pid == 0) {
+            /* Apply explicit redirections (< infile, > outfile, >> outfile) */
+            if (redirect_apply(ctx, cmd) < 0) {
+                _exit(1);
+            }
+
+            if (cmd->argc == 0 || !cmd->argv[0]) {
+                _exit(0);
+            }
+
+            /* Expand wildcards (*, ?, [) in child */
+            expand_globs(cmd);
+
+            if (builtins_is_builtin(cmd->argv[0])) {
+                int bres = builtins_exec_cmd(ctx, cmd, -1, NULL);
+                int bstatus = (bres == BUILTIN_SUCCESS ? 0 : 1);
+                _exit(bstatus);
+            }
+
+            /* Execute command natively via execvp */
+            execvp(cmd->argv[0], cmd->argv);
+
+            if (errno == ENOENT) {
+                fprintf(stderr, "terminator: %s: command not found\n", cmd->argv[0]);
+            } else {
+                fprintf(stderr, "terminator: %s: %s\n", cmd->argv[0], strerror(errno));
+            }
+            fflush(stderr);
+            _exit(127);
         }
 
-        /* Expand wildcards (*, ?, [) in child */
-        expand_globs(cmd);
-
-        /* Execute command natively via execvp */
-        execvp(cmd->argv[0], cmd->argv);
-
-        if (errno == ENOENT) {
-            fprintf(stderr, "terminator: %s: command not found\n", cmd->argv[0]);
-        } else {
-            fprintf(stderr, "terminator: %s: %s\n", cmd->argv[0], strerror(errno));
-        }
-        fflush(stderr);
-        _exit(127);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        int last_status = 0;
+        if (WIFEXITED(status)) last_status = WEXITSTATUS(status);
+        else if (WIFSIGNALED(status)) last_status = 128 + WTERMSIG(status);
+        return last_status;
     }
 
     /* N > 1: Pipeline orchestration without IPC framing */
@@ -542,6 +564,12 @@ int pipeline_exec_pipeline_raw(ShellContext *ctx, Pipeline *pl) {
                 _exit(0);
             }
 
+            if (builtins_is_builtin(pl->commands[i].argv[0])) {
+                int bres = builtins_exec_cmd(ctx, &pl->commands[i], -1, NULL);
+                int bstatus = (bres == BUILTIN_SUCCESS ? 0 : 1);
+                _exit(bstatus);
+            }
+
             execvp(pl->commands[i].argv[0], pl->commands[i].argv);
             if (errno == ENOENT) {
                 fprintf(stderr, "terminator: %s: command not found\n", pl->commands[i].argv[0]);
@@ -569,7 +597,7 @@ int pipeline_exec_pipeline_raw(ShellContext *ctx, Pipeline *pl) {
             else if (WIFSIGNALED(status)) last_status = 128 + WTERMSIG(status);
         }
     }
-    _exit(last_status);
+    return last_status;
 }
 
 int pipeline_exec_string_raw(ShellContext *ctx, const char *cmd_line) {
@@ -600,23 +628,50 @@ int pipeline_exec_string_raw(ShellContext *ctx, const char *cmd_line) {
         _exit(0);
     }
 
-    /* 4. Parse AST (redirections, pipeline segments) */
-    Pipeline pl;
-    if (ast_parse(tokens, num_tokens, &pl) < 0) {
-        fprintf(stderr, "terminator: syntax error near unexpected token\n");
-        fflush(stderr);
-        lexer_free_tokens(tokens, num_tokens);
-        _exit(2);
+    /* 4. Parse and execute commands chained with &&, ||, ; */
+    int seg_start = 0;
+    int should_execute = 1;
+    int last_status = 0;
+
+    for (int i = 0; i <= num_tokens; i++) {
+        int is_delim = (i == num_tokens);
+        int next_chain = 0; /* 0: none, 1: &&, 2: ||, 3: ; */
+
+        if (!is_delim) {
+            if (strcmp(tokens[i], "&&") == 0)      { is_delim = 1; next_chain = 1; }
+            else if (strcmp(tokens[i], "||") == 0) { is_delim = 1; next_chain = 2; }
+            else if (strcmp(tokens[i], ";") == 0)  { is_delim = 1; next_chain = 3; }
+        }
+
+        if (is_delim) {
+            int seg_len = i - seg_start;
+            if (seg_len > 0 && should_execute) {
+                Pipeline pl;
+                if (ast_parse(&tokens[seg_start], seg_len, &pl) < 0) {
+                    fprintf(stderr, "terminator: syntax error near unexpected token\n");
+                    fflush(stderr);
+                    lexer_free_tokens(tokens, num_tokens);
+                    _exit(2);
+                }
+                if (pl.num_commands > 0) {
+                    last_status = pipeline_exec_pipeline_raw(ctx, &pl);
+                    if (ctx) ctx->last_status = last_status;
+                }
+                pipeline_free(&pl);
+            }
+
+            if (next_chain == 1) { /* && */
+                should_execute = (last_status == 0);
+            } else if (next_chain == 2) { /* || */
+                should_execute = (last_status != 0);
+            } else if (next_chain == 3) { /* ; */
+                should_execute = 1;
+            }
+
+            seg_start = i + 1;
+        }
     }
+
     lexer_free_tokens(tokens, num_tokens);
-
-    if (pl.num_commands == 0) {
-        pipeline_free(&pl);
-        _exit(0);
-    }
-
-    /* 5. Execute raw pipeline */
-    int status = pipeline_exec_pipeline_raw(ctx, &pl);
-    pipeline_free(&pl);
-    _exit(status);
+    _exit(last_status);
 }

@@ -83,6 +83,156 @@ void screen_buf_destroy(ScreenBuf *sb)
 /*  Scrollback line management                                        */
 /* ================================================================== */
 
+static void sanitize_terminal_text(const char *src, char *dst, size_t dst_size) {
+    if (!src || !dst || dst_size == 0) return;
+
+    size_t d = 0;
+    const unsigned char *p = (const unsigned char *)src;
+    int col = 0;
+
+    while (*p && d < dst_size - 1) {
+        /* 1. Escape sequences: \033[ ... [a-zA-Z] */
+        if (*p == 0x1B) {
+            p++;
+            if (*p == '[') {
+                p++;
+                while (*p && !((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z'))) {
+                    p++;
+                }
+                if (*p) p++;
+            }
+            continue;
+        }
+
+        /* 2. Newline */
+        if (*p == '\n') {
+            dst[d++] = '\n';
+            col = 0;
+            p++;
+            continue;
+        }
+
+        /* 3. Tab: expand to spaces up to next multiple of 8 */
+        if (*p == '\t') {
+            int spaces = 8 - (col % 8);
+            if (spaces == 0) spaces = 8;
+            while (spaces > 0 && d < dst_size - 1) {
+                dst[d++] = ' ';
+                col++;
+                spaces--;
+            }
+            p++;
+            continue;
+        }
+
+        /* 4. Carriage return: ignore */
+        if (*p == '\r') {
+            p++;
+            continue;
+        }
+
+        /* 5. ASCII printable */
+        if (*p >= 32 && *p <= 126) {
+            dst[d++] = (char)*p;
+            col++;
+            p++;
+            continue;
+        }
+
+        /* 6. Other control characters: ignore */
+        if (*p < 32) {
+            p++;
+            continue;
+        }
+
+        /* 7. UTF-8 multi-byte decoding */
+        unsigned int u = 0;
+        int bytes = 0;
+
+        if ((*p & 0xE0) == 0xC0) {
+            if ((p[1] & 0xC0) == 0x80) {
+                u = ((p[0] & 0x1F) << 6) | (p[1] & 0x3F);
+                bytes = 2;
+            }
+        } else if ((*p & 0xF0) == 0xE0) {
+            if ((p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) {
+                u = ((p[0] & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+                bytes = 3;
+            }
+        } else if ((*p & 0xF8) == 0xF0) {
+            if ((p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80 && (p[3] & 0xC0) == 0x80) {
+                u = ((p[0] & 0x07) << 18) | ((p[1] & 0x3F) << 12) | ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+                bytes = 4;
+            }
+        }
+
+        if (bytes == 0) {
+            p++;
+            continue;
+        }
+        p += bytes;
+
+        /* Transliterate Unicode codepoints to clean ASCII equivalents */
+        if (u >= 0x2500 && u <= 0x257F) {
+            /* Box drawing */
+            if (u == 0x2500 || u == 0x2501 || u == 0x2504 || u == 0x2505 || u == 0x2508 || u == 0x2509) {
+                dst[d++] = '-';
+            } else if (u == 0x2502 || u == 0x2503 || u == 0x2506 || u == 0x2507 || u == 0x250A || u == 0x250B) {
+                dst[d++] = '|';
+            } else if (u == 0x2550) {
+                dst[d++] = '=';
+            } else if (u == 0x2551) {
+                dst[d++] = '|';
+            } else {
+                dst[d++] = '+';
+            }
+            col++;
+        } else if (u >= 0x2010 && u <= 0x2015) {
+            /* Dashes (em dash, en dash, etc.) */
+            dst[d++] = '-';
+            col++;
+        } else if (u == 0x2018 || u == 0x2019 || u == 0x201A || u == 0x201B) {
+            dst[d++] = '\'';
+            col++;
+        } else if (u == 0x201C || u == 0x201D || u == 0x201E || u == 0x201F) {
+            dst[d++] = '"';
+            col++;
+        } else if (u == 0x2022 || u == 0x2023 || u == 0x00B7) {
+            dst[d++] = '*';
+            col++;
+        } else if (u == 0x2713 || u == 0x2714) {
+            /* Checkmark */
+            dst[d++] = 'v';
+            col++;
+        } else if (u == 0x2717 || u == 0x2718) {
+            dst[d++] = 'x';
+            col++;
+        } else if (u == 0x2026) {
+            /* Ellipsis */
+            for (int k = 0; k < 3 && d < dst_size - 1; k++) {
+                dst[d++] = '.';
+                col++;
+            }
+        } else if (u == 0x2192 || u == 0x21D2) {
+            if (d < dst_size - 2) {
+                dst[d++] = '-'; dst[d++] = '>'; col += 2;
+            }
+        } else if (u == 0x2190 || u == 0x21D0) {
+            if (d < dst_size - 2) {
+                dst[d++] = '<'; dst[d++] = '-'; col += 2;
+            }
+        } else if (u >= 0xA0 && u <= 0xFF) {
+            dst[d++] = (char)u;
+            col++;
+        } else {
+            dst[d++] = '?';
+            col++;
+        }
+    }
+
+    dst[d] = '\0';
+}
+
 /*
  * screen_buf_add_line — append a single line to the scrollback ring buffer.
  *
@@ -94,8 +244,15 @@ void screen_buf_add_line(ScreenBuf *sb, const char *line)
     if (!sb || !line)
         return;
 
-    size_t len = strlen(line);
-    const char *p = line;
+    size_t in_len = strlen(line);
+    size_t san_sz = in_len * 4 + 64;
+    char *san = malloc(san_sz);
+    if (!san) return;
+
+    sanitize_terminal_text(line, san, san_sz);
+
+    size_t len = strlen(san);
+    const char *p = san;
     do {
         size_t chunk = (len >= LINE_MAXLEN) ? LINE_MAXLEN - 1 : len;
         memcpy(sb->lines[sb->head], p, chunk);
@@ -113,6 +270,8 @@ void screen_buf_add_line(ScreenBuf *sb, const char *line)
 
         sb->total++;
     } while (len > 0);
+
+    free(san);
 }
 
 /*
@@ -126,7 +285,13 @@ void screen_buf_add_text(ScreenBuf *sb, const char *text)
     if (!sb || !text)
         return;
 
-    const char *p = text;
+    size_t in_len = strlen(text);
+    size_t san_sz = in_len * 4 + 64;
+    char *san = malloc(san_sz);
+    if (!san) return;
+
+    sanitize_terminal_text(text, san, san_sz);
+    const char *p = san;
 
     /* If the previous line was soft-wrapped (didn't end with '\n'),
      * append into that slot first if there is space. */
@@ -202,6 +367,8 @@ void screen_buf_add_text(ScreenBuf *sb, const char *text)
             break;
         }
     }
+
+    free(san);
 }
 
 /*
@@ -266,6 +433,33 @@ int screen_buf_visible_count(ScreenBuf *sb)
     if (!sb)
         return 0;
     return (sb->total < SCROLLBACK_MAX) ? sb->total : SCROLLBACK_MAX;
+}
+
+/*
+ * screen_buf_count_vrows — calculate total visual display rows for all stored lines.
+ */
+int screen_buf_count_vrows(ScreenBuf *sb, int cols)
+{
+    if (!sb || cols <= 0)
+        return 0;
+
+    int stored = screen_buf_visible_count(sb);
+    int total_sb_vrows = 0;
+    int idx = 0;
+    while (idx < stored) {
+        int total_chars = 0;
+        while (idx < stored) {
+            const char *l = screen_buf_get_line(sb, idx);
+            if (l) total_chars += (int)strlen(l);
+            int wrapped = screen_buf_get_line_wrapped(sb, idx);
+            idx++;
+            if (!wrapped) break;
+        }
+        int v = (total_chars + cols - 1) / cols;
+        if (v < 1) v = 1;
+        total_sb_vrows += v;
+    }
+    return total_sb_vrows;
 }
 
 /* ================================================================== */

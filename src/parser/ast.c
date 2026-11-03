@@ -58,7 +58,10 @@ static int is_operator_token(const char *token) {
             strcmp(token, "<") == 0 ||
             strcmp(token, ">") == 0 ||
             strcmp(token, ">>") == 0 ||
-            strcmp(token, "&") == 0);
+            strcmp(token, "&") == 0 ||
+            strcmp(token, "&&") == 0 ||
+            strcmp(token, "||") == 0 ||
+            strcmp(token, ";") == 0);
 }
 
 int ast_parse(char *tokens[], int num_tokens, Pipeline *pl) {
@@ -73,6 +76,12 @@ int ast_parse(char *tokens[], int num_tokens, Pipeline *pl) {
     for (int i = 0; i < num_tokens; i++) {
         const char *t = tokens[i];
         if (!t) continue;
+
+        /* Reject unhandled chaining tokens inside single pipeline AST */
+        if (strcmp(t, "&&") == 0 || strcmp(t, "||") == 0 || strcmp(t, ";") == 0) {
+            pipeline_free(pl);
+            return -1;
+        }
 
         /* 1. Pipe operator '|' */
         if (strcmp(t, "|") == 0) {
