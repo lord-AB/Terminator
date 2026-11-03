@@ -1,148 +1,139 @@
-# Terminator: A Custom Terminal & Shell
+# Terminator: Multi-Tab X11 Terminal & Shell
 
-**Computing Laboratory (CS69201) · Term Project**  
-*A multi-tab X11 terminal emulator and UNIX shell built in C from scratch.*
-
----
-
-## 1. Overview
-
-**Terminator** is an integrated terminal emulator and interactive shell developed in C for Linux and macOS. It opens its own X11 graphical window featuring a custom multi-tab bar, custom font rendering, and an interactive command-line interface. 
-
-The terminal shell implements pipelines of arbitrary length, comprehensive I/O redirection, job control, persistent shared history across tabs with Longest Common Substring (LCS) search, auto-completion with Longest Common Prefix (LCP), bash-style line editing hotkeys with X11 clipboard integration, parallel command watching (`multiWatch`), and an internal bash script interpreter that executes `.sh` scripts without invoking `/bin/bash`.
+Terminator is a multi-tab X11 terminal emulator and UNIX shell implemented in C from scratch using POSIX system calls and standard `libX11` primitives. It handles graphical window management, line editing, process orchestration, pipelines, job control, persistent shared history, auto-completion, and internal bash script interpretation without external shell dependencies.
 
 ---
 
-## 2. Dependencies & Installation
+## 1. Dependencies & Installation
+
+Terminator requires GCC/Clang, GNU Make, POSIX threads, and X11 client development libraries.
 
 ### Linux (Ubuntu / Debian)
-Install GCC, Make, POSIX pthread libraries, and X11 development headers:
 ```bash
-sudo apt update
-sudo apt install build-essential libx11-dev
+sudo apt-get update
+sudo apt-get install -y build-essential libx11-dev
 ```
 
-### Linux (Fedora / RHEL)
+### Linux (Fedora / RHEL / CentOS)
 ```bash
-sudo dnf install gcc make libX11-devel
+sudo dnf install -y gcc make libX11-devel
 ```
 
 ### macOS
-Terminator natively supports macOS using XQuartz or Homebrew:
-1. Install [XQuartz](https://www.xquartz.org/) or install via Homebrew:
+Terminator runs on macOS using XQuartz:
+1. Install XQuartz and X11 development headers:
    ```bash
    brew install --cask xquartz
    brew install libx11 pkg-config
    ```
-2. Start XQuartz (`open -a XQuartz`), enable *"Allow connections from network clients"* in XQuartz preferences if needed, and verify `DISPLAY` is set:
+2. Start XQuartz (`open -a XQuartz`) and ensure `DISPLAY` is exported:
    ```bash
    export DISPLAY=:0
    ```
 
 ---
 
-## 3. Building and Running
+## 2. Build & Execution
 
-### Build
-Run `make` from the repository root:
+### Compilation
+Build the project using standard GNU Make:
 ```bash
 make clean
 make
 ```
-This builds the binary `./terminator` with standard `-Wall -Wextra -g -pthread` compiler flags and linked X11 libraries.
+The binary `./terminator` is compiled under `-Wall -Wextra -O2 -g -pthread` with zero compiler warnings.
 
 ### Execution Modes
+Terminator supports two distinct tab concurrency models selectable via command-line arguments:
 
-Terminator supports two distinct concurrency architectures:
+| Mode | Command | Concurrency Architecture |
+| :--- | :--- | :--- |
+| **Thread Mode** *(Default)* | `./terminator` | Each tab runs in an independent POSIX thread (`pthread_create`). Working directories are virtualized per tab so `cd` in one tab does not affect others. |
+| **Process Mode** | `./terminator useProcess=True` | Each tab runs in an independent child process (`fork()`). Tabs share history via anonymous POSIX shared memory (`mmap`). |
 
-#### 1. Thread Mode (Default)
-In thread mode, Terminator runs as a single process where each terminal tab executes in its own POSIX thread (`pthread_create`). Tabs maintain virtualized working directories (`cwd`) so directory navigation in one tab never interferes with another:
+*(Note: `useProcess=True`, `useProcess=true`, `useProcess`, and `use Process True` are all accepted case-insensitively).*
+
+---
+
+## 3. Implemented Features (Tasks 1 – 11)
+
+| Task | Feature | Implementation Details |
+| :--- | :--- | :--- |
+| **1** | **X11 GUI & Tabs** | Double-buffered offscreen `Pixmap` rendering, custom tab bar (`[ 1: ~/dir ] [ + ]`), mouse click hit-testing, dynamic font metrics, and scrollback buffer. |
+| **2** | **Built-ins & Exec** | Built-ins: `cd`, `exit`, `history`, `multiWatch`, `jobs`, `fg`, `bg`, `source`, `clear`. Non-builtins dispatched via `fork()` + `execvp()`. |
+| **3** | **Multiline & Quotes** | Trailing `\` continuation, quote-aware lexer preserving literals in `'...'`, variable expansion in `"..."`, innermost-first command substitution `$(...)` and `` `...` ``. |
+| **4** | **Redirection** | `<` file input, `>` overwrite output, `>>` append output via `dup2()`. Missing input files abort execution before spawning processes. |
+| **5** | **Pipelines & Wildcards** | Arbitrary $N$-command pipelines (`cmd1 \| cmd2 \| ... \| cmdN`) with $N-1$ pipes. In-child glob expansion (`*`, `?`) evaluated after directory change. Exit status propagates from final stage. |
+| **6** | **Parallel `multiWatch`** | Built-in command executing $K$ commands concurrently (`multiWatch ["cmd1", "cmd2"]`), non-blocking output multiplexing via `poll()`, 2-second periodic refresh, and child process group cleanup on `Ctrl+C`. Supports command chaining (`&&`, `||`, `;`). |
+| **7** | **Hotkeys & Line Editing** | GNU Readline-style navigation (`Ctrl+A`/`E`, `Ctrl+U`/`K`, `Ctrl+W`, `Ctrl+L`, `Ctrl+D`), macOS `Cmd` modifier support, and custom mapping via `~/.terminatorrc`. X11 clipboard integration (`Ctrl+Shift+C` / `Ctrl+Shift+V`). |
+| **8** | **Signals & Job Control** | Process group isolation (`setpgid`), X11 interception of `Ctrl+C` (`SIGINT`) and `Ctrl+Z` (`SIGTSTP`) forwarded to child PGID, background execution (`cmd &`), and job control built-ins (`jobs`, `fg %n`, `bg %n`). |
+| **9** | **Searchable History** | Rolling 10,000-command ring buffer in POSIX shared memory and `~/.terminator_history`. `history` displays last 1,000 entries. `Ctrl+R` Longest Common Substring (LCS) dynamic programming search, cancellable via `Esc`/`Ctrl+C`. |
+| **10** | **Auto-Completion** | <kbd>Tab</kbd> completion resolving to Longest Common Prefix (LCP). Ambiguous matches wrap across multiple downward lines. Instant single-keystroke selection (`1`..`9`) without requiring Enter. |
+| **11** | **Bash Script Interpreter**| Interprets `.sh` scripts (`./script.sh`, `bash script.sh`, `source script.sh`) internally without calling `/bin/bash`. Features pre-execution AST syntax validation, `[ ... ]` condition evaluation (`-f`, `-d`, `=`, `!=`, `-eq`, etc.), nested `if/elif/else/fi`, `$0`..`$9`, `$#`, `$?`, and `exit [n]`. |
+
+---
+
+## 4. Keybindings & Configuration
+
+Terminator loads keybindings on startup from `~/.terminatorrc`, `./terminatorrc`, or `./.terminatorrc` (a template is provided in `.terminatorrc.sample`).
+
+### Default Keybindings
+- **Tab Management:** `Ctrl+T` / `Cmd+T` (New Tab), `Alt+1`..`9` / `Cmd+1`..`9` (Switch Tab), `Ctrl+D` / `exit` / middle-click (Close Tab)
+- **Cursor Navigation:** `Left` / `Right` (Char), `Ctrl+A` / `Home` (Start of line), `Ctrl+E` / `End` (End of line)
+- **Line Editing:** `Ctrl+U` (Cut to start), `Ctrl+K` (Cut to end), `Ctrl+W` (Cut word), `Ctrl+L` (Clear screen)
+- **History & Search:** `Up` / `Down` (Browse history), `Ctrl+R` (LCS search, `Esc` or `Ctrl+C` to cancel)
+- **Completion:** `Tab` (LCP completion), `1`..`9` (Choose numbered match)
+- **Clipboard:** `Ctrl+Shift+C` / `Cmd+C` (Copy), `Ctrl+Shift+V` / `Cmd+V` (Paste)
+- **Job Control:** `Ctrl+C` (Interrupt foreground PGID), `Ctrl+Z` (Suspend foreground PGID)
+- **Buffer Scroll:** Mouse wheel or `Shift+Up` / `Shift+Down` (scrolls back; entering a command snaps back to bottom)
+
+---
+
+## 5. Known Limitations
+
+In compliance with the project specification:
+1. **Scripting Language Scope:** Per Task 11, shell script interpretation is intentionally bounded to conditions (`if/elif/else/fi`), test brackets (`[ ... ]`), parameters, variables, pipes, redirections, and command substitutions. Loops (`for`, `while`) and function declarations are outside the specification.
+2. **Terminal Protocol:** Terminator is an integrated graphical shell with a direct X11 text canvas. Full VT100 / curses alternate-screen terminal applications that require raw pseudo-terminal (pty) termios cursor addressing (such as `vim` or `htop`) are outside project scope.
+3. **Background Job Stdin:** Background jobs launched with `&` have standard input redirected to `/dev/null` per POSIX conventions so they cannot steal input from the foreground shell.
+
+---
+
+## 6. Verification & Test Scripts
+
+The repository includes automated scripts and sample commands for verification:
+
+### Test Scripts
+- `check.sh`: Exercises Task 11 condition evaluation (`if [ -f "$1" ]`), variable expansion, and compilation.
+- `broken.sh`: Tests pre-execution syntax validation (reports syntax error without running).
+- `test_script_exit.sh`: Tests script `exit [n]` status propagation into `$?`.
+- `test_script_env.sh`: Tests variable expansion and isolated subshell environment.
+
+### Sample Test Commands
 ```bash
-./terminator
-```
+# 1. Multi-stage pipelines & redirection (Tasks 4 & 5)
+cat Makefile | grep -v '^#' | tr 'a-z' 'A-Z' | sort | head -n 5
+echo "Terminator Test" > /tmp/term_test.txt && cat < /tmp/term_test.txt
 
-#### 2. Process Mode
-In process mode, each terminal tab executes as an independent child process created via `fork()`:
-```bash
-./terminator useProcess=True
-```
+# 2. Parallel multiWatch (Task 6)
+multiWatch ["uptime", "cat Makefile | head -n 2"]
+multiWatch ["sleep 2 && echo slow", "echo fast"]
 
-In both modes, user commands are spawned as child processes (`fork() + execvp()`).
+# 3. Job control (Task 8)
+sleep 60 &
+jobs
+sleep 30
+# Press Ctrl+Z to suspend, then resume:
+bg %1
+fg %1
+# Press Ctrl+C to interrupt
 
+# 4. History search (Task 9)
+# Press Ctrl+R, type search substring, press Enter (or Esc to cancel)
+history
 
----
-
-## 4. Implemented Features
-
-| Feature | Description |
-| :--- | :--- |
-| **Multi-Tab X11 GUI** | Custom double-buffered X11 window, dynamic tab bar `[ 1: ~/dir ] [ + ]`, mouse click hit-testing, dynamic font metrics. |
-| **Concurrency Modes** | Thread Mode (per-tab pthread with virtual CWD isolation) and Process Mode (per-tab fork). |
-| **Multiline & Quoting** | Line continuation with trailing `\`, quote-aware lexer preserving literal content in `'...'`, expanding variables in `"..."`, innermost-first `$(...)` and `` `...` `` command substitution. |
-| **I/O Redirection** | File input `<` and output `>` / `>>` with proper descriptor binding via `dup2()`. Missing input files abort execution before spawning processes. |
-| **Pipelines & Wildcards** | Arbitrary $N$-command pipelines (`cmd1 \| cmd2 \| ... \| cmdN`) with $N-1$ pipes. In-child globbing (`*`, `?`) evaluated after `chdir()`. Exit status propagates from the last pipeline stage. |
-| **Parallel `multiWatch`** | Built-in command running $K$ commands in parallel, multiplexing output via non-blocking `poll()`, re-executing every 2 seconds, and cleanly terminating child process groups on `Ctrl+C`. |
-| **Hotkeys & Keybindings** | Bash-style editing (`Ctrl+A`/`E`, `Ctrl+U`/`K`, `Ctrl+W`, `Ctrl+L`, `Ctrl+D`), macOS Command (`Cmd`) key support, conflict detection, and runtime configuration via `~/.terminatorrc`. |
-| **X11 Clipboard** | Copy (`Ctrl+Shift+C`) and Paste (`Ctrl+Shift+V`) integrating with `XA_CLIPBOARD` via X11 selection requests and events. |
-| **Signals & Job Control** | Process groups (`setpgid`), `Ctrl+C` (`SIGINT`), `Ctrl+Z` (`SIGTSTP`), background execution (`cmd &`), and job control built-ins (`jobs`, `fg %n`, `bg %n`). |
-| **Searchable Shared History**| 10,000-command persistent history in POSIX shared memory and `~/.terminator_history`, `history` built-in, `Up`/`Down` browsing, and `Ctrl+R` Longest Common Substring (LCS) dynamic programming search. |
-| **Auto-Completion** | Tab-key file-name completion extending to Longest Common Prefix (LCP), lexicographically sorted suggestions displayed directly beneath the typing line, and instant dismissal on non-menu keystrokes. |
-| **Bash Script Interpreter** | Interprets scripts (`./script.sh`, `bash script.sh`, `source script.sh`) internally without calling `/bin/bash`. Features pre-execution syntax validation, `[ ... ]` condition evaluation (`-f`, `-d`, `=`, `!=`, `-eq`, etc.), control flow (`if/elif/else/fi`), `$0..$9`, `$#`, `$?`, and `exit [n]`. |
-
----
-
-## 5. Hotkey Configuration (`~/.terminatorrc`)
-
-Terminator automatically reads `~/.terminatorrc` on launch. A sample template is provided in `.terminatorrc.sample`.
-
-```ini
-# Copy template to home directory:
-cp .terminatorrc.sample ~/.terminatorrc
-```
-
-### Default Keybindings & Mouse Actions
-- **New Tab:** `Ctrl+T` / `Cmd+T` or Left-click on `[ + ]`
-- **Switch Tabs:** `Alt+1` through `Alt+9` or Left-click on tab header
-- **Close Tab:** `Ctrl+D`, `exit`, or Middle-click / Right-click on tab header
-- **Move Cursor:** `Left` / `Right`
-- **Start / End of Line:** `Ctrl+A` / `Ctrl+E`
-- **Delete Line Before / After:** `Ctrl+U` / `Ctrl+K`
-- **Delete Word:** `Ctrl+W`
-- **Clear Screen:** `Ctrl+L`
-- **Reverse History Search:** `Ctrl+R`
-- **Copy Selection:** `Ctrl+Shift+C`
-- **Paste Selection:** `Ctrl+Shift+V`
-- **Interrupt / Suspend:** `Ctrl+C` / `Ctrl+Z`
-- **Scroll Buffer:** `Shift+Up` / `Shift+Down` or Mouse Wheel (Button4/Button5)
-
----
-
-## 6. Project Structure
-
-```
-terminator/
-├── Makefile                        # Build system with dependency rules
-├── README.md                       # Setup, usage, and architecture overview
-├── design.md                       # Detailed engineering design document
-├── .terminatorrc.sample            # Hotkey configuration template
-│
-├── include/                        # Subsystem headers
-│   ├── common.h                    # Constants, types, macros
-│   ├── gui/                        # X11 window, tab bar, screen buffer, clipboard
-│   ├── ipc/                        # Protocol framing, worker threading/forking, SHM sync
-│   ├── input/                      # Line editor, hotkeys, auto-completion
-│   ├── parser/                     # Multiline detector, lexer, AST, variable & command expansion
-│   ├── exec/                       # Shell context, pipelines, redirection, jobs, built-ins
-│   ├── features/                   # History store, LCS search, multiWatch
-│   └── script/                     # Script validator, condition evaluator, interpreter
-│
-└── src/                            # Implementation files mirroring include/
-    ├── main.c                      # Entry point, CLI flags, initialization
-    ├── gui/                        # X11 rendering and event dispatching
-    ├── ipc/                        # IPC pipes, worker threads/processes, SHM
-    ├── input/                      # Terminal input, auto-completion, hotkeys
-    ├── parser/                     # Lexing, AST construction, substitutions
-    ├── exec/                       # Execution engine, jobs, built-in commands
-    ├── features/                   # Multiwatch, history ring-buffer, LCS
-    └── script/                     # Bash script syntax validator and execution engine
+# 5. Bash script interpretation (Task 11)
+./check.sh Makefile
+bash broken.sh          # Aborts with syntax error
+./test_script_exit.sh
+echo $?                 # Displays 7
 ```
